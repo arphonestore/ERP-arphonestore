@@ -1,0 +1,132 @@
+PowerShell 7.7.0-preview.3
+Loading personal and system profiles took 4931ms.
+(base) PS E:\Github Project\ERP\master> npm run dev
+
+> phone-inventory@0.1.0 dev
+> next dev
+
+▲ Next.js 16.3.0 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.18.75:3000
+- Environments: .env
+✓ Ready in 6.2s
+✓ Running next.config.ts took 369ms
+
+○ Compiling / ...
+ GET / 307 in 12.3s (next.js: 11.6s, application-code: 751ms)
+ GET /auth/login 200 in 409ms (next.js: 52ms, application-code: 357ms)
+[next-auth][error][JWT_SESSION_ERROR]
+https://next-auth.js.org/errors#jwt_session_error JWT invalid {
+  message: 'JWT invalid',
+  stack: 'Error: JWT invalid\n' +
+    '    at Object.session (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next-auth_07a7ldt._.js:2863:38)\n' +
+    '    at async AuthHandler (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next-auth_07a7ldt._.js:421:37)\n' +
+    '    at async NextAuthRouteHandler (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next-auth_07a7ldt._.js:3354:30)\n' +
+    '    at async NextAuth._args$ (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next-auth_07a7ldt._.js:3389:24)\n' +
+    '    at async AppRouteRouteModule.do (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\compiled\\next-server\\app-route-turbo.runtime.dev.js:5:42791)\n' +
+    '    at async AppRouteRouteModule.handle (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\compiled\\next-server\\app-route-turbo.runtime.dev.js:5:50709)\n' +
+    '    at async responseGenerator (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next_07d1qj5._.js:2388:30)\n' +
+    '    at async AppRouteRouteModule.handleResponse (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\compiled\\next-server\\app-route-turbo.runtime.dev.js:1:248823)\n' +
+    '    at async handleResponse (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next_07d1qj5._.js:2460:32)\n' +
+    '    at async Module.handler (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next_07d1qj5._.js:2580:9)\n' +
+    '    at async DevServer.renderToResponseWithComponentsImpl (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\base-server.js:1537:9)\n' +
+    '    at async DevServer.renderPageComponent (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\base-server.js:1589:24)\n' +
+    '    at async DevServer.renderToResponseImpl (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\base-server.js:1639:32)\n' +
+    '    at async DevServer.pipeImpl (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\base-server.js:1088:25)\n' +
+    '    at async NextNodeServer.handleCatchallRenderRequest (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\next-server.js:338:17)\n' +
+    '    at async DevServer.handleRequestImpl (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\base-server.js:979:17)\n' +
+    '    at async E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\dev\\next-dev-server.js:426:20\n' +
+    '    at async Span.traceAsyncFn (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\trace\\trace.js:164:20)\n' +
+    '    at async DevServer.handleRequest (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\dev\\next-dev-server.js:422:24)\n' +
+    '    at async invokeRender (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\lib\\router-server.js:306:21)\n' +
+    '    at async handleRequest (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\lib\\router-server.js:508:24)\n' +
+    '    at async requestHandlerImpl (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\lib\\router-server.js:565:13)\n' +
+    '    at async Server.requestListener (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\lib\\start-server.js:225:13)',
+  name: 'Error'
+}
+ GET /api/auth/session 200 in 2.6s (next.js: 2.3s, application-code: 308ms)
+[next-auth][error][JWT_SESSION_ERROR]
+https://next-auth.js.org/errors#jwt_session_error JWT invalid {
+  message: 'JWT invalid',
+  stack: 'Error: JWT invalid\n' +
+    '    at Object.session (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next-auth_07a7ldt._.js:2863:38)\n' +
+    '    at async AuthHandler (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next-auth_07a7ldt._.js:421:37)\n' +
+    '    at async NextAuthRouteHandler (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next-auth_07a7ldt._.js:3354:30)\n' +
+    '    at async NextAuth._args$ (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next-auth_07a7ldt._.js:3389:24)\n' +
+    '    at async AppRouteRouteModule.do (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\compiled\\next-server\\app-route-turbo.runtime.dev.js:5:42791)\n' +
+    '    at async AppRouteRouteModule.handle (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\compiled\\next-server\\app-route-turbo.runtime.dev.js:5:50709)\n' +
+    '    at async responseGenerator (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next_07d1qj5._.js:2388:30)\n' +
+    '    at async AppRouteRouteModule.handleResponse (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\compiled\\next-server\\app-route-turbo.runtime.dev.js:1:248823)\n' +
+    '    at async handleResponse (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next_07d1qj5._.js:2460:32)\n' +
+    '    at async Module.handler (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next_07d1qj5._.js:2580:9)\n' +
+    '    at async DevServer.renderToResponseWithComponentsImpl (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\base-server.js:1537:9)\n' +
+    '    at async DevServer.renderPageComponent (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\base-server.js:1589:24)\n' +
+    '    at async DevServer.renderToResponseImpl (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\base-server.js:1639:32)\n' +
+    '    at async DevServer.pipeImpl (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\base-server.js:1088:25)\n' +
+    '    at async NextNodeServer.handleCatchallRenderRequest (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\next-server.js:338:17)\n' +
+    '    at async DevServer.handleRequestImpl (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\base-server.js:979:17)\n' +
+    '    at async E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\dev\\next-dev-server.js:426:20\n' +
+    '    at async Span.traceAsyncFn (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\trace\\trace.js:164:20)\n' +
+    '    at async DevServer.handleRequest (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\dev\\next-dev-server.js:422:24)\n' +
+    '    at async invokeRender (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\lib\\router-server.js:306:21)\n' +
+    '    at async handleRequest (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\lib\\router-server.js:508:24)\n' +
+    '    at async requestHandlerImpl (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\lib\\router-server.js:565:13)\n' +
+    '    at async Server.requestListener (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\lib\\start-server.js:225:13)',
+  name: 'Error'
+}
+ GET /api/auth/session 200 in 346ms (next.js: 311ms, application-code: 35ms)
+[next-auth][error][JWT_SESSION_ERROR]
+https://next-auth.js.org/errors#jwt_session_error JWT invalid {
+  message: 'JWT invalid',
+  stack: 'Error: JWT invalid\n' +
+    '    at Object.session (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next-auth_07a7ldt._.js:2863:38)\n' +
+    '    at async AuthHandler (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next-auth_07a7ldt._.js:421:37)\n' +
+    '    at async NextAuthRouteHandler (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next-auth_07a7ldt._.js:3354:30)\n' +
+    '    at async NextAuth._args$ (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next-auth_07a7ldt._.js:3389:24)\n' +
+    '    at async AppRouteRouteModule.do (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\compiled\\next-server\\app-route-turbo.runtime.dev.js:5:42791)\n' +
+    '    at async AppRouteRouteModule.handle (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\compiled\\next-server\\app-route-turbo.runtime.dev.js:5:50709)\n' +
+    '    at async responseGenerator (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next_07d1qj5._.js:2388:30)\n' +
+    '    at async AppRouteRouteModule.handleResponse (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\compiled\\next-server\\app-route-turbo.runtime.dev.js:1:248823)\n' +
+    '    at async handleResponse (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next_07d1qj5._.js:2460:32)\n' +
+    '    at async Module.handler (E:\\Github Project\\ERP\\master\\.next\\dev\\server\\chunks\\node_modules_next_07d1qj5._.js:2580:9)\n' +
+    '    at async DevServer.renderToResponseWithComponentsImpl (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\base-server.js:1537:9)\n' +
+    '    at async DevServer.renderPageComponent (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\base-server.js:1589:24)\n' +
+    '    at async DevServer.renderToResponseImpl (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\base-server.js:1639:32)\n' +
+    '    at async DevServer.pipeImpl (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\base-server.js:1088:25)\n' +
+    '    at async NextNodeServer.handleCatchallRenderRequest (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\next-server.js:338:17)\n' +
+    '    at async DevServer.handleRequestImpl (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\base-server.js:979:17)\n' +
+    '    at async E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\dev\\next-dev-server.js:426:20\n' +
+    '    at async Span.traceAsyncFn (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\trace\\trace.js:164:20)\n' +
+    '    at async DevServer.handleRequest (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\dev\\next-dev-server.js:422:24)\n' +
+    '    at async invokeRender (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\lib\\router-server.js:306:21)\n' +
+    '    at async handleRequest (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\lib\\router-server.js:508:24)\n' +
+    '    at async requestHandlerImpl (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\lib\\router-server.js:565:13)\n' +
+    '    at async Server.requestListener (E:\\Github Project\\ERP\\master\\node_modules\\next\\dist\\server\\lib\\start-server.js:225:13)',
+  name: 'Error'
+}
+ GET /api/auth/session 200 in 49ms (next.js: 17ms, application-code: 32ms)
+ GET /api/auth/providers 200 in 40ms (next.js: 15ms, application-code: 25ms)
+ GET /api/auth/csrf 200 in 35ms (next.js: 5ms, application-code: 30ms)
+ POST /api/auth/callback/credentials 200 in 502ms (next.js: 5ms, application-code: 497ms)
+ GET /api/auth/session 200 in 43ms (next.js: 8ms, application-code: 35ms)
+ GET /dashboard 200 in 467ms (next.js: 237ms, application-code: 230ms)
+ GET /api/dashboard 500 in 324ms (next.js: 71ms, application-code: 253ms)
+ GET /api/auth/session 200 in 52ms (next.js: 19ms, application-code: 33ms)
+ GET /activity 200 in 103ms (next.js: 64ms, application-code: 40ms)
+ GET /api/activity 500 in 250ms (next.js: 97ms, application-code: 153ms)
+ GET /api/auth/session 200 in 44ms (next.js: 18ms, application-code: 25ms)
+ GET /stock 200 in 95ms (next.js: 59ms, application-code: 36ms)
+ GET /api/stock 500 in 283ms (next.js: 77ms, application-code: 205ms)
+ GET /api/stock 500 in 292ms (next.js: 95ms, application-code: 196ms)
+ GET /barang-masuk 200 in 96ms (next.js: 61ms, application-code: 35ms)
+ GET /api/stock 500 in 174ms (next.js: 10ms, application-code: 165ms)
+ GET /api/stock-in 500 in 329ms (next.js: 85ms, application-code: 244ms)
+ GET /api/stock 500 in 437ms (next.js: 89ms, application-code: 348ms)
+ GET /api/stock-in 500 in 437ms (next.js: 101ms, application-code: 336ms)
+ GET /barang-keluar 200 in 87ms (next.js: 52ms, application-code: 35ms)
+ GET /api/stock-out 500 in 221ms (next.js: 105ms, application-code: 116ms)
+ GET /api/stock 500 in 235ms (next.js: 93ms, application-code: 141ms)
+ GET /api/stock-out 500 in 259ms (next.js: 77ms, application-code: 182ms)
+ GET /api/stock 500 in 254ms (next.js: 114ms, application-code: 140ms)
+ GET /laporan 200 in 97ms (next.js: 64ms, application-code: 33ms)
+ GET /api/stock-out 500 in 126ms (next.js: 18ms, application-code: 108ms)
