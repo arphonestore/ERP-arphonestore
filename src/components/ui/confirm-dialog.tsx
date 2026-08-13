@@ -1,4 +1,5 @@
-"use client";
+
+import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -32,8 +33,21 @@ export function ConfirmDialog({
   destructive = false,
   onConfirm,
 }: ConfirmDialogProps) {
+  const [confirming, setConfirming] = useState(false);
+
+  const handleConfirm = async () => {
+    if (confirming) return;
+
+    setConfirming(true);
+    try {
+      await onConfirm();
+    } finally {
+      setConfirming(false);
+    }
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(nextOpen) => !confirming && onOpenChange(nextOpen)}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
@@ -43,11 +57,17 @@ export function ConfirmDialog({
         <DialogBody className="pt-0" />
 
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={confirming}>
             {cancelText}
           </Button>
-          <Button type="button" variant={destructive ? "destructive" : "default"} onClick={() => void onConfirm()}>
-            {confirmText}
+          <Button
+            type="button"
+            data-dialog-initial-focus="true"
+            variant={destructive ? "destructive" : "default"}
+            onClick={() => void handleConfirm()}
+            disabled={confirming}
+          >
+            {confirming ? "Memproses..." : confirmText}
           </Button>
         </DialogFooter>
       </DialogContent>

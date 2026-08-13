@@ -2,10 +2,11 @@
 
 import { format } from "date-fns";
 import type { DateRange } from "react-day-picker";
-import { ArrowDown, ArrowUp, Box, ChartColumnBig, CircleDollarSign, TrendingUp, Wallet } from "lucide-react";
+import { AlertCircle, ArrowDown, ArrowUp, Box, ChartColumnBig, CircleDollarSign, RefreshCcw, TrendingUp, Wallet } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bar, BarChart, PolarAngleAxis, RadialBar, RadialBarChart, XAxis } from "recharts";
 
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   ChartContainer,
@@ -16,7 +17,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatRupiah, formatTanggal } from "@/lib/format";
+import { formatRupiah } from "@/lib/format";
 import type { StockOut } from "@/types";
 
 type DashboardPeriodOption = {
@@ -41,10 +42,9 @@ type DashboardPayload = {
     omzet_periode: number;
     profit_bersih_periode: number;
     modal_putar_periode: number;
-    modal_periode: number;
     profit_roi_persen: number;
     profit_bulan_lalu: number;
-    profit_perubahan_persen: number;
+    profit_perubahan_persen: number | null;
     profit_tren: "up" | "down" | "flat";
   };
   chartSeries: {
@@ -62,7 +62,7 @@ const chartConfig = {
     color: "#018d8a",
   },
   profit: {
-    label: "Profit",
+    label: "Laba Kotor",
     color: "#0cbab7",
   },
 } satisfies ChartConfig;
@@ -82,6 +82,22 @@ type DashboardLiveProps = {
   dateRange?: DateRange;
 };
 
+type DashboardRange = DashboardPayload["period"];
+
+function isDashboardRange(value: DashboardRange) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value.from) && /^\d{4}-\d{2}-\d{2}$/.test(value.to);
+}
+
+function formatDateOnly(value: string, options?: Intl.DateTimeFormatOptions) {
+  const parsed = new Date(`${value.slice(0, 10)}T00:00:00`);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("id-ID", options ?? { dateStyle: "medium" }).format(parsed);
+}
+
 export function DashboardLive({ dateRange }: DashboardLiveProps) {
   const [data, setData] = useState<DashboardPayload | null>(null);
   const [periods, setPeriods] = useState<DashboardPeriodOption[]>([]);
@@ -91,6 +107,9 @@ export function DashboardLive({ dateRange }: DashboardLiveProps) {
   const [error, setError] = useState<string | null>(null);
   const chartHostRef = useRef<HTMLDivElement | null>(null);
   const [chartReady, setChartReady] = useState(false);
+  const selectedRangeRef = useRef<DashboardRange | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const requestSequenceRef = useRef(0);
 
   const fromParam = useMemo(() => {
     if (dateRange?.from) {
@@ -115,52 +134,85 @@ export function DashboardLive({ dateRange }: DashboardLiveProps) {
 
   const hasExternalRange = Boolean(dateRange?.from || dateRange?.to);
 
-  const loadDashboard = useCallback(async (showLoading: boolean, explicitRange?: { from: string; to: string }) => {
+  const loadDashboard = useCallback(async (showLoading: boolean, explicitRange?: DashboardRange) => {
+    const requestId = ++requestSequenceRef.current;
+    abortControllerRef.current?.abort();
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const requestedRange = explicitRange ?? selectedRangeRef.current;
+
+    if (explicitRange) {
+      selectedRangeRef.current = explicitRange;
+    }
+
     if (showLoading) {
       setLoading(true);
     }
 
     setError(null);
 
-    const fromValue = explicitRange?.from ?? (hasExternalRange ? fromParam : undefined);
-    const toValue = explicitRange?.to ?? (hasExternalRange ? toParam : undefined);
-    const params = new URLSearchParams();
+    try {
+      const params = new URLSearchParams();
 
-    if (fromValue) {
-      params.set("from", fromValue);
+      if (requestedRange) {
+        params.set("from", requestedRange.from);
+        params.set("to", requestedRange.to);
+      }
+
+      const query = params.toString();
+      const response = await fetch(`/api/dashboard${query ? `?${query}` : ""}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const errorPayload = (await response.json().catch(() => ({ message: "Gagal memuat dashboard." }))) as {
+          message?: string;
+        };
+        throw new Error(errorPayload.message ?? "Gagal memuat dashboard.");
+      }
+
+      const payload = (await response.json()) as DashboardPayload;
+
+      if (requestId !== requestSequenceRef.current) {
+        return;
+      }
+
+      setData(payload);
+      setPeriods(payload.availablePeriods ?? []);
+
+      if (isDashboardRange(payload.period)) {
+        selectedRangeRef.current = payload.period;
+      }
+
+      const synchronizedYear = Number(payload.period.from.slice(0, 4));
+      const synchronizedMonth = Number(payload.period.from.slice(5, 7));
+
+      setSelectedYear(Number.isFinite(synchronizedYear) ? String(synchronizedYear) : "");
+      setSelectedMonth(Number.isFinite(synchronizedMonth) ? String(synchronizedMonth) : "");
+    } catch (loadError) {
+      if (controller.signal.aborted || requestId !== requestSequenceRef.current) {
+        return;
+      }
+
+      setError(loadError instanceof Error ? loadError.message : "Gagal memuat dashboard. Periksa koneksi lalu coba lagi.");
+    } finally {
+      if (requestId === requestSequenceRef.current) {
+        setLoading(false);
+      }
     }
-
-    if (toValue) {
-      params.set("to", toValue);
-    }
-
-    const query = params.toString();
-    const response = await fetch(`/api/dashboard${query ? `?${query}` : ""}`, { cache: "no-store" });
-
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => ({ message: "Gagal memuat dashboard." }))) as {
-        message?: string;
-      };
-      setError(payload.message ?? "Gagal memuat dashboard.");
-      setLoading(false);
-      return;
-    }
-
-    const payload = (await response.json()) as DashboardPayload;
-    setData(payload);
-    setPeriods(payload.availablePeriods ?? []);
-
-    if (payload.selectedPeriod) {
-      setSelectedYear((prev) => prev || String(payload.selectedPeriod?.year));
-      setSelectedMonth((prev) => prev || String(payload.selectedPeriod?.month));
-    }
-
-    setLoading(false);
-  }, [fromParam, hasExternalRange, toParam]);
+  }, []);
 
   useEffect(() => {
+    const externalRange = hasExternalRange ? { from: fromParam, to: toParam } : undefined;
+
+    if (externalRange) {
+      selectedRangeRef.current = externalRange;
+    }
+
     const initialTimer = window.setTimeout(() => {
-      void loadDashboard(true);
+      void loadDashboard(true, externalRange);
     }, 0);
 
     const intervalId = window.setInterval(() => {
@@ -170,8 +222,9 @@ export function DashboardLive({ dateRange }: DashboardLiveProps) {
     return () => {
       window.clearTimeout(initialTimer);
       window.clearInterval(intervalId);
+      abortControllerRef.current?.abort();
     };
-  }, [loadDashboard]);
+  }, [fromParam, hasExternalRange, loadDashboard, toParam]);
 
   useEffect(() => {
     const node = chartHostRef.current;
@@ -264,21 +317,34 @@ export function DashboardLive({ dateRange }: DashboardLiveProps) {
     void applyPeriodFilter(selectedYear, nextMonth);
   }
 
-  if (loading) {
-    return <p className="text-sm text-muted-foreground">Memuat data dashboard...</p>;
+  if (loading && !data) {
+    return <p className="text-sm text-muted-foreground" role="status">Memuat data dashboard...</p>;
   }
 
-  if (error || !data) {
-    return <p className="text-sm text-destructive">{error ?? "Data dashboard tidak tersedia."}</p>;
+  if (!data) {
+    return (
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4" role="alert">
+        <AlertCircle className="size-5 text-destructive" />
+        <p className="min-w-0 flex-1 text-sm text-destructive">{error ?? "Data dashboard tidak tersedia."}</p>
+        <Button type="button" variant="outline" onClick={() => void loadDashboard(true)} disabled={loading}>
+          <RefreshCcw className={`size-4 ${loading ? "animate-spin" : ""}`} />
+          Coba Lagi
+        </Button>
+      </div>
+    );
   }
 
   const totalTransaksi = data.kpi.total_masuk + data.kpi.total_keluar;
-  const profitChangeAbs = Math.abs(data.kpi.profit_perubahan_persen);
+  const profitChangeAbs = Math.abs(data.kpi.profit_perubahan_persen ?? 0);
   const profitTrend = data.kpi.profit_tren;
-  const isProfitUp = profitTrend === "up";
-  const isProfitDown = profitTrend === "down";
-  const profitTrendText =
-    profitTrend === "flat" ? "Profit stabil dibanding bulan lalu." : `${profitChangeAbs.toFixed(1)}% dibanding bulan lalu`;
+  const hasProfitBaseline = data.kpi.profit_perubahan_persen !== null;
+  const isProfitUp = hasProfitBaseline && profitTrend === "up";
+  const isProfitDown = hasProfitBaseline && profitTrend === "down";
+  const profitTrendText = !hasProfitBaseline
+    ? "Belum ada baseline bulan lalu"
+    : profitTrend === "flat"
+      ? "Laba stabil dibanding bulan lalu"
+      : `${profitChangeAbs.toFixed(1)}% dibanding bulan lalu`;
   const profitTrendColorClass = isProfitUp
     ? "text-emerald-600 dark:text-emerald-400"
     : isProfitDown
@@ -291,12 +357,23 @@ export function DashboardLive({ dateRange }: DashboardLiveProps) {
       name: "transaksi",
       masuk: data.kpi.total_masuk,
       keluar: data.kpi.total_keluar,
-      total: Math.max(totalTransaksi, 1),
+      total: totalTransaksi,
     },
   ];
 
   return (
     <div className="grid min-w-0 gap-4 overflow-x-clip sm:gap-5">
+      {error ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-300/60 bg-amber-50 p-3 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200" role="alert">
+          <AlertCircle className="size-4" />
+          <p className="min-w-0 flex-1 text-sm">Refresh gagal: {error}. Data terakhir tetap ditampilkan.</p>
+          <Button type="button" variant="outline" size="sm" onClick={() => void loadDashboard(true)} disabled={loading}>
+            <RefreshCcw className={`size-4 ${loading ? "animate-spin" : ""}`} />
+            Coba Lagi
+          </Button>
+        </div>
+      ) : null}
+
       <Card className="min-w-0">
         <CardHeader>
           <CardTitle className="text-base">Filter Data Bulanan</CardTitle>
@@ -361,7 +438,7 @@ export function DashboardLive({ dateRange }: DashboardLiveProps) {
         <Card className="min-w-0 p-4 sm:p-6">
           <div className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 sm:flex sm:flex-col sm:items-start sm:gap-2">
             <div className="col-start-1 row-start-1 flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <TrendingUp className="size-4" /> Profit Bersih
+              <TrendingUp className="size-4" /> Laba Kotor
             </div>
             <div className="col-start-2 row-span-2 row-start-1 text-right text-lg font-bold leading-snug tracking-tight text-emerald-600 dark:text-emerald-400 sm:text-left sm:text-2xl">
               {formatRupiah(data.kpi.profit_bersih_periode)}
@@ -377,13 +454,13 @@ export function DashboardLive({ dateRange }: DashboardLiveProps) {
         <Card className="min-w-0 p-4 sm:p-6">
           <div className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 sm:flex sm:flex-col sm:items-start sm:gap-2">
             <div className="col-start-1 row-start-1 flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <Wallet className="size-4" /> Modal + Profit
+              <Wallet className="size-4" /> Modal Terjual
             </div>
             <div className="col-start-2 row-span-2 row-start-1 text-right text-lg font-bold leading-snug tracking-tight sm:text-left sm:text-2xl">
-              {formatRupiah(data.kpi.modal_periode)}
+              {formatRupiah(data.kpi.modal_putar_periode)}
             </div>
             <div className="col-start-1 row-start-2 text-xs text-muted-foreground">
-              Modal putar & profit periode.
+              Harga modal unit yang terjual pada periode.
             </div>
           </div>
         </Card>
@@ -444,7 +521,7 @@ export function DashboardLive({ dateRange }: DashboardLiveProps) {
                         cursor={false}
                         content={
                           <ChartTooltipContent
-                            formatter={( value, name) => {
+                            formatter={(value, name) => {
                               return [
                                 `${value} Transaksi`,
                                 name === "masuk" ? "Masuk" : "Keluar",
@@ -479,9 +556,9 @@ export function DashboardLive({ dateRange }: DashboardLiveProps) {
         <Card className="min-w-0">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
-              <ChartColumnBig className="size-4" /> Grafik Omzet & Profit Periode
+              <ChartColumnBig className="size-4" /> Grafik Omzet & Laba Kotor Periode
             </CardTitle>
-            <CardDescription>Visualisasi berdasarkan tanggal pada periode terpilih (auto refresh 30 detik).</CardDescription>
+            <CardDescription>Batang ditampilkan berdampingan agar omzet tidak dihitung ganda dengan laba (auto refresh 30 detik).</CardDescription>
           </CardHeader>
           <CardContent className="px-3 pb-4 sm:px-5 sm:pb-5">
             {data.chartSeries.length === 0 ? (
@@ -498,32 +575,20 @@ export function DashboardLive({ dateRange }: DashboardLiveProps) {
                           tickMargin={8}
                           axisLine={false}
                           tickFormatter={(value) => {
-                            return new Date(value as string).toLocaleDateString("id-ID", {
-                              day: "2-digit",
-                            });
+                            return formatDateOnly(String(value), { day: "2-digit" });
                           }}
                         />
-                        <Bar
-                          dataKey="omzet"
-                          stackId="a"
-                          fill="var(--color-omzet)"
-                          radius={[0, 0, 4, 4]}
-                        />
-                        <Bar
-                          dataKey="profit"
-                          stackId="a"
-                          fill="var(--color-profit)"
-                          radius={[4, 4, 0, 0]}
-                        />
+                        <Bar dataKey="omzet" fill="var(--color-omzet)" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="profit" fill="var(--color-profit)" radius={[4, 4, 0, 0]} />
                         <ChartTooltip
                           cursor={false}
                           content={
                             <ChartTooltipContent
-                              labelFormatter={(value) => formatTanggal(String(value))}
+                              labelFormatter={(value) => formatDateOnly(String(value))}
                               formatter={(value, name) => {
                                 return [
                                   formatRupiah(Number(value ?? 0)),
-                                  name === "omzet" ? "Omzet" : "Profit",
+                                  name === "omzet" ? "Omzet" : "Laba Kotor",
                                 ];
                               }}
                             />
@@ -576,7 +641,7 @@ export function DashboardLive({ dateRange }: DashboardLiveProps) {
                     <TableCell className="max-w-36 truncate whitespace-nowrap font-semibold text-emerald-600 dark:text-emerald-400">
                       {formatRupiah(Number(item.keuntungan ?? 0))}
                     </TableCell>
-                    <TableCell className="max-w-36 truncate whitespace-nowrap">{formatTanggal(item.tanggal_keluar)}</TableCell>
+                    <TableCell className="max-w-36 truncate whitespace-nowrap">{formatDateOnly(item.tanggal_keluar)}</TableCell>
                   </TableRow>
                 ))
               )}

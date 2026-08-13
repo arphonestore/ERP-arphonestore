@@ -1,91 +1,106 @@
-import { NextResponse } from "next/server";
-
 import { requireApiAuth } from "@/lib/api-auth";
-import { logActivity } from "@/lib/activity-log";
+import { stockInMutationSchema, listQuerySchema } from "@/lib/api/contracts";
+import {
+  escapePostgrestSearch,
+  fetchAllPagesWithCount,
+  fetchPage,
+  inventoryRpc,
+  paginationMetadata,
+  type QueryBuilder,
+  type RangeQueryFactory,
+} from "@/lib/api/database";
+import {
+  actorFromSession,
+  apiErrorResponse,
+  jsonNoStore,
+  parseJsonBody,
+  parseSearchParams,
+} from "@/lib/api/http";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import type { StockIn } from "@/types";
 
-export async function GET() {
+function stockInQuery(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  filters: { from?: string; to?: string; search?: string }
+): RangeQueryFactory<StockIn> {
+  return ({ count, head }) => {
+    let query = supabase
+      .from("stock_in")
+      .select(
+        "id, stock_id, type, imei, harga, penjual, tanggal_masuk, voided_at, created_at",
+        { count, head }
+      )
+      .is("voided_at", null);
+
+    if (filters.from) query = query.gte("tanggal_masuk", filters.from);
+    if (filters.to) query = query.lte("tanggal_masuk", filters.to);
+
+    if (filters.search) {
+      const search = escapePostgrestSearch(filters.search);
+      query = query.or(
+        `type.ilike.%${search}%,imei.ilike.%${search}%,penjual.ilike.%${search}%`
+      );
+    }
+
+    return query
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false }) as unknown as QueryBuilder<StockIn>;
+  };
+}
+
+export async function GET(request: Request) {
   const authResult = await requireApiAuth();
   if (!authResult.ok) return authResult.response;
 
-  const supabaseAdmin = getSupabaseAdmin();
+  const parsedQuery = parseSearchParams(request, listQuerySchema);
+  if (!parsedQuery.ok) return parsedQuery.response;
 
-  const { data, error } = await supabaseAdmin
-    .from("stock_in")
-    .select("*")
-    .order("created_at", { ascending: false });
+  const { page, pageSize, paginated, from, to, search } = parsedQuery.data;
 
-  if (error) {
-    return NextResponse.json({ message: error.message }, { status: 500 });
+  try {
+    const buildQuery = stockInQuery(getSupabaseAdmin(), { from, to, search });
+
+    if (paginated) {
+      const result = await fetchPage(buildQuery, page, pageSize);
+      return jsonNoStore({
+        data: result.data,
+        pagination: paginationMetadata(page, pageSize, result.total),
+      });
+    }
+
+    const result = await fetchAllPagesWithCount(buildQuery, { label: "Data barang masuk" });
+    return jsonNoStore(result.data, {
+      headers: { "X-Total-Count": String(result.total) },
+    });
+  } catch (error) {
+    return apiErrorResponse(error, "stock-in.GET");
   }
-
-  return NextResponse.json(data);
 }
 
 export async function POST(request: Request) {
   const authResult = await requireApiAuth();
   if (!authResult.ok) return authResult.response;
 
-  const supabaseAdmin = getSupabaseAdmin();
+  const parsedBody = await parseJsonBody(request, stockInMutationSchema);
+  if (!parsedBody.ok) return parsedBody.response;
 
-  const body = await request.json();
-  const tanggalMasuk = String(body.tanggal_masuk ?? "");
+  const body = parsedBody.data;
 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggalMasuk)) {
-    return NextResponse.json({ message: "Format tanggal masuk tidak valid." }, { status: 400 });
+  try {
+    const result = await inventoryRpc<StockIn>(getSupabaseAdmin(), "create_stock_in", {
+      p_type: body.type,
+      p_imei: body.imei,
+      p_harga: body.harga,
+      p_penjual: body.penjual,
+      p_tanggal_masuk: body.tanggal_masuk,
+      ...actorFromSession(authResult.session.user),
+    });
+
+    if (result.error) throw result.error;
+    if (!result.data) throw new Error("RPC create_stock_in tidak mengembalikan data.");
+
+    return jsonNoStore(result.data, { status: 201 });
+  } catch (error) {
+    return apiErrorResponse(error, "stock-in.POST");
   }
-
-  const today = new Date().toISOString().slice(0, 10);
-
-  if (tanggalMasuk > today) {
-    return NextResponse.json({ message: "Tanggal masuk tidak boleh melebihi hari ini." }, { status: 400 });
-  }
-
-  const harga = Number(body.harga);
-
-  const { data, error } = await supabaseAdmin
-    .from("stock_in")
-    .insert(
-      {
-        type: body.type,
-        imei: body.imei,
-        harga,
-        penjual: body.penjual,
-        tanggal_masuk: tanggalMasuk,
-      } as never
-    )
-    .select("*")
-    .single();
-
-  if (error) {
-    return NextResponse.json({ message: error.message }, { status: 400 });
-  }
-
-  const { error: stockError } = await supabaseAdmin.from("stock").upsert(
-    {
-      type: body.type,
-      imei: body.imei,
-      harga,
-      status: "available",
-    } as never,
-    { onConflict: "imei" }
-  );
-
-  if (stockError) {
-    await supabaseAdmin.from("stock_in").delete().eq("id", (data as { id: string }).id);
-    return NextResponse.json({ message: stockError.message }, { status: 400 });
-  }
-
-  await logActivity({
-    supabase: supabaseAdmin,
-    user: authResult.session.user,
-    action: "create",
-    module: "stock_in",
-    entityId: (data as { id: string }).id,
-    entityLabel: `${body.type} (${body.imei})`,
-    description: "Mencatat barang masuk.",
-    afterData: data as Record<string, unknown>,
-  });
-
-  return NextResponse.json(data, { status: 201 });
 }

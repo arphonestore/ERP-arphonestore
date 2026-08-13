@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Funnel, Pencil, Plus, ShoppingCart, Trash2 } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, Funnel, Pencil, Plus, RefreshCcw, ShoppingCart, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatRupiah, formatTanggal } from "@/lib/format";
+import { formatRupiah } from "@/lib/format";
 import type { Stock, StockOut } from "@/types";
 
 type FormState = {
@@ -31,16 +31,74 @@ type CheckoutDraftItem = {
   harga_modal: number;
   harga_jual: number;
   tanggal_keluar: string;
+  idempotencyKey: string;
 };
 
-const initialForm: FormState = {
-  type: "",
-  imei: "",
-  pembeli: "",
-  harga_modal: "",
-  harga_jual: "",
-  tanggal_keluar: new Date().toISOString().slice(0, 10),
-};
+const DRAFT_STORAGE_KEY = "ar-store:stock-out-drafts:v1";
+const NETWORK_TIMEOUT_MS = 15_000;
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), NETWORK_TIMEOUT_MS);
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+function toLocalDateInput(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseLocalDateOnly(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.slice(0, 10));
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return date;
+}
+
+function formatLocalDateOnly(value: string) {
+  const date = parseLocalDateOnly(value);
+  return date ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium" }).format(date) : value;
+}
+
+function createInitialForm(): FormState {
+  return {
+    type: "",
+    imei: "",
+    pembeli: "",
+    harga_modal: "",
+    harga_jual: "",
+    tanggal_keluar: toLocalDateInput(),
+  };
+}
+
+function createIdempotencyKey() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+
+  return `checkout-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 function parseCurrencyToNumberString(value: string) {
   return value.replace(/\D/g, "");
@@ -66,8 +124,9 @@ export function StockOutCrud() {
   const [periodFilter, setPeriodFilter] = useState<"all" | "today" | "week" | "month">("month");
   const [periodMenuOpen, setPeriodMenuOpen] = useState(false);
   const periodMenuRef = useRef<HTMLDivElement | null>(null);
-  const [form, setForm] = useState<FormState>(initialForm);
+  const [form, setForm] = useState<FormState>(() => createInitialForm());
   const [draftItems, setDraftItems] = useState<CheckoutDraftItem[]>([]);
+  const [draftsHydrated, setDraftsHydrated] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(15);
@@ -77,42 +136,108 @@ export function StockOutCrud() {
   const [deleteLoadingId, setDeleteLoadingId] = useState<string | null>(null);
   const [deleteCandidateId, setDeleteCandidateId] = useState<string | null>(null);
   const [editCandidate, setEditCandidate] = useState<StockOut | null>(null);
+  const [rowsError, setRowsError] = useState<string | null>(null);
+  const [stocksError, setStocksError] = useState<string | null>(null);
 
-  async function fetchRows() {
-    const response = await fetch("/api/stock-out", { cache: "no-store" });
+  async function fetchRows(showLoading = true): Promise<StockOut[] | null> {
+    if (showLoading) setLoading(true);
+    setRowsError(null);
 
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => ({ message: "Gagal memuat barang keluar." }))) as {
-        message?: string;
-      };
-      toast.error(payload.message ?? "Gagal memuat barang keluar.");
-      setLoading(false);
-      return;
+    try {
+      const response = await fetchWithTimeout("/api/stock-out", { cache: "no-store" });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({ message: "Gagal memuat barang keluar." }))) as {
+          message?: string;
+        };
+        throw new Error(payload.message ?? "Gagal memuat barang keluar.");
+      }
+
+      const data = (await response.json()) as StockOut[];
+      setRows(data);
+      return data;
+    } catch (loadError) {
+      const message = loadError instanceof Error ? loadError.message : "Gagal memuat barang keluar. Periksa koneksi lalu coba lagi.";
+      setRowsError(message);
+      return null;
+    } finally {
+      if (showLoading) setLoading(false);
     }
-
-    const data = (await response.json()) as StockOut[];
-    setRows(data);
-    setLoading(false);
   }
 
-  async function fetchAvailableStocks() {
-    const response = await fetch("/api/stock", { cache: "no-store" });
+  async function fetchAvailableStocks(): Promise<Stock[] | null> {
+    setStocksError(null);
 
-    if (!response.ok) {
-      return;
+    try {
+      const response = await fetchWithTimeout("/api/stock", { cache: "no-store" });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({ message: "Gagal memuat stock tersedia." }))) as {
+          message?: string;
+        };
+        throw new Error(payload.message ?? "Gagal memuat stock tersedia.");
+      }
+
+      const data = (await response.json()) as Stock[];
+      const available = data.filter((item) => item.status === "available");
+      setAvailableStocks(available);
+      return available;
+    } catch (loadError) {
+      const message = loadError instanceof Error ? loadError.message : "Gagal memuat stock tersedia. Periksa koneksi lalu coba lagi.";
+      setStocksError(message);
+      return null;
     }
-
-    const data = (await response.json()) as Stock[];
-    setAvailableStocks(data.filter((item) => item.status === "available"));
   }
 
   useEffect(() => {
-    async function loadInitialRows() {
-      await Promise.all([fetchRows(), fetchAvailableStocks()]);
-    }
-
-    void loadInitialRows();
+    void Promise.all([fetchRows(), fetchAvailableStocks()]);
   }, []);
+
+  useEffect(() => {
+    try {
+      const storedDrafts = window.sessionStorage.getItem(DRAFT_STORAGE_KEY);
+      if (!storedDrafts) return;
+
+      const parsed = JSON.parse(storedDrafts) as unknown;
+      if (!Array.isArray(parsed)) return;
+
+      const validDrafts = parsed.filter((item): item is CheckoutDraftItem => {
+        if (!item || typeof item !== "object") return false;
+        const draft = item as Partial<CheckoutDraftItem>;
+        return (
+          typeof draft.id === "string" &&
+          typeof draft.idempotencyKey === "string" &&
+          typeof draft.type === "string" &&
+          typeof draft.imei === "string" &&
+          typeof draft.pembeli === "string" &&
+          typeof draft.harga_modal === "number" &&
+          typeof draft.harga_jual === "number" &&
+          typeof draft.tanggal_keluar === "string"
+        );
+      });
+
+      setDraftItems(validDrafts);
+    } catch {
+      window.sessionStorage.removeItem(DRAFT_STORAGE_KEY);
+      toast.warning("Draft checkout lama tidak valid dan telah direset.");
+    } finally {
+      setDraftsHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!draftsHydrated) return;
+
+    try {
+      if (draftItems.length === 0) {
+        window.sessionStorage.removeItem(DRAFT_STORAGE_KEY);
+      } else {
+        window.sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draftItems));
+      }
+    } catch {
+      toast.error("Draft checkout tidak dapat disimpan di sesi browser ini.");
+    }
+  }, [draftItems, draftsHydrated]);
 
   useEffect(() => {
     if (!periodMenuOpen) return;
@@ -168,18 +293,18 @@ export function StockOutCrud() {
     const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
     return rows.filter((row) => {
-      const keluarDate = new Date(row.tanggal_keluar);
-      const validDate = !Number.isNaN(keluarDate.getTime());
+      const keluarDate = parseLocalDateOnly(row.tanggal_keluar);
+      const validDate = keluarDate !== null;
 
       const matchesPeriod =
         periodFilter === "all"
           ? true
           : validDate &&
             (periodFilter === "today"
-              ? keluarDate >= startOfToday && keluarDate < startOfTomorrow
+              ? keluarDate! >= startOfToday && keluarDate! < startOfTomorrow
               : periodFilter === "week"
-                ? keluarDate >= startOfWeek && keluarDate < startOfTomorrow
-                : keluarDate >= startOfMonth && keluarDate < startOfNextMonth);
+                ? keluarDate! >= startOfWeek && keluarDate! < startOfTomorrow
+                : keluarDate! >= startOfMonth && keluarDate! < startOfNextMonth);
 
       const matchesKeyword =
         !keyword ||
@@ -228,22 +353,38 @@ export function StockOutCrud() {
   }, [draftItems]);
 
   function validateDraftForm() {
-    if (!form.imei) {
-      return "Pilih item stock terlebih dahulu.";
+    const selectedStock = availableStocks.find((item) => item.imei === form.imei);
+
+    if (!form.imei || (!editingId && !selectedStock)) {
+      return "Pilih item yang masih tersedia dari daftar stock.";
     }
 
-    if (!form.pembeli.trim()) {
-      return "Nama pembeli wajib diisi sebelum simpan draft.";
+    if (!form.type.trim() || !/^\d{6,20}$/.test(form.imei.trim())) {
+      return "Detail barang atau IMEI tidak valid.";
     }
 
-    if (!form.tanggal_keluar) {
-      return "Tanggal keluar wajib diisi.";
+    const buyer = form.pembeli.trim();
+    if (buyer.length < 2 || buyer.length > 100) {
+      return "Nama pembeli wajib terdiri dari 2-100 karakter.";
     }
 
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(form.tanggal_keluar) || !parseLocalDateOnly(form.tanggal_keluar)) {
+      return "Tanggal keluar tidak valid.";
+    }
+
+    if (form.tanggal_keluar > toLocalDateInput()) {
+      return "Tanggal keluar tidak boleh melewati hari ini.";
+    }
+
+    const hargaModal = Number(form.harga_modal);
     const hargaJual = Number(form.harga_jual);
 
-    if (Number.isNaN(hargaJual) || hargaJual <= 0) {
-      return "Harga jual harus lebih dari 0.";
+    if (!Number.isSafeInteger(hargaModal) || hargaModal <= 0) {
+      return "Harga modal stock tidak valid. Muat ulang daftar stock.";
+    }
+
+    if (!Number.isSafeInteger(hargaJual) || hargaJual <= 0) {
+      return "Harga jual harus berupa angka bulat lebih dari 0.";
     }
 
     return null;
@@ -275,7 +416,7 @@ export function StockOutCrud() {
       harga_modal: String(item.harga),
       harga_jual: "",
       pembeli: "",
-      tanggal_keluar: new Date().toISOString().slice(0, 10),
+      tanggal_keluar: toLocalDateInput(),
     }));
   }
 
@@ -308,10 +449,11 @@ export function StockOutCrud() {
       harga_modal: Number(form.harga_modal),
       harga_jual: Number(form.harga_jual),
       tanggal_keluar: form.tanggal_keluar,
+      idempotencyKey: createIdempotencyKey(),
     };
 
     setDraftItems((prev) => [...prev, draftItem]);
-    setForm(initialForm);
+    setForm(createInitialForm());
     toast.success("Item checkout berhasil disimpan ke draft.");
     setSavingDraft(false);
   }
@@ -320,17 +462,29 @@ export function StockOutCrud() {
     if (editingId) {
       setEditingId(null);
     }
-    setForm(initialForm);
+    setForm(createInitialForm());
   }
 
   function removeDraftItem(id: string) {
     setDraftItems((prev) => prev.filter((item) => item.id !== id));
   }
 
+  function transactionMatchesDraft(row: StockOut, draft: CheckoutDraftItem) {
+    return (
+      row.imei === draft.imei &&
+      row.pembeli.trim() === draft.pembeli.trim() &&
+      Number(row.harga_jual) === draft.harga_jual &&
+      row.tanggal_keluar.slice(0, 10) === draft.tanggal_keluar
+    );
+  }
+
+  async function verifyDraftCommitted(draft: CheckoutDraftItem) {
+    const latestRows = await fetchRows(false);
+    return latestRows?.some((row) => transactionMatchesDraft(row, draft)) ?? false;
+  }
+
   async function handleCheckoutDrafts() {
-    if (submitting) {
-      return;
-    }
+    if (submitting) return;
 
     if (draftItems.length === 0) {
       toast.info("Belum ada item draft untuk diproses checkout.");
@@ -339,47 +493,57 @@ export function StockOutCrud() {
 
     setSubmitting(true);
 
-    const failedIds: string[] = [];
-    let successCount = 0;
-
-    for (const draft of draftItems) {
-      const response = await fetch("/api/stock-out", {
+    try {
+      const response = await fetchWithTimeout("/api/stock-out/batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          imei: draft.imei,
-          pembeli: draft.pembeli,
-          harga_jual: draft.harga_jual,
-          tanggal_keluar: draft.tanggal_keluar,
+          items: draftItems.map((draft) => ({
+            imei: draft.imei,
+            pembeli: draft.pembeli,
+            harga_jual: draft.harga_jual,
+            tanggal_keluar: draft.tanggal_keluar,
+            idempotency_key: draft.idempotencyKey,
+          })),
         }),
       });
 
       if (!response.ok) {
-        failedIds.push(draft.id);
-        const err = (await response.json().catch(() => ({ message: "Gagal checkout item." }))) as {
-          message?: string;
-        };
-        toast.error(`${draft.type} (${draft.imei}): ${err.message ?? "Gagal checkout item."}`);
-        continue;
+        const payload = (await response.json().catch(() => ({
+          message: "Batch checkout gagal.",
+        }))) as { message?: string };
+        throw new Error(payload.message ?? "Batch checkout gagal.");
       }
 
-      successCount += 1;
-    }
-
-    if (successCount > 0) {
-      toast.success(`${successCount} item berhasil di-checkout.`);
-    }
-
-    if (failedIds.length > 0) {
-      setDraftItems((prev) => prev.filter((item) => failedIds.includes(item.id)));
-      toast.info(`${failedIds.length} item tetap tersimpan di draft karena gagal checkout.`);
-    } else {
       setDraftItems([]);
-    }
+      setForm(createInitialForm());
+      toast.success(`${draftItems.length} item berhasil di-checkout secara atomik.`);
+    } catch (checkoutError) {
+      const committedChecks = await Promise.all(
+        draftItems.map(async (draft) => {
+          try {
+            return await verifyDraftCommitted(draft);
+          } catch {
+            return false;
+          }
+        })
+      );
 
-    setForm(initialForm);
-    setSubmitting(false);
-    await Promise.all([fetchRows(), fetchAvailableStocks()]);
+      if (committedChecks.every(Boolean)) {
+        setDraftItems([]);
+        setForm(createInitialForm());
+        toast.success(`${draftItems.length} item terverifikasi sudah di-checkout.`);
+      } else {
+        toast.error(
+          checkoutError instanceof Error
+            ? `${checkoutError.message} Tidak ada item baru yang diproses sebagian; draft dipertahankan untuk retry.`
+            : "Batch checkout gagal. Draft dipertahankan untuk retry."
+        );
+      }
+    } finally {
+      await Promise.all([fetchRows(false), fetchAvailableStocks()]);
+      setSubmitting(false);
+    }
   }
 
   async function handleUpdateSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -393,32 +557,41 @@ export function StockOutCrud() {
       return;
     }
 
-    setSubmitting(true);
-
-    const response = await fetch(`/api/stock-out/${editingId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        pembeli: form.pembeli,
-        harga_jual: Number(form.harga_jual),
-        tanggal_keluar: form.tanggal_keluar,
-      }),
-    });
-
-    if (!response.ok) {
-      const err = (await response.json().catch(() => ({ message: "Gagal memperbarui transaksi." }))) as {
-        message?: string;
-      };
-      toast.error(err.message ?? "Gagal memperbarui transaksi.");
-      setSubmitting(false);
+    const validationError = validateDraftForm();
+    if (validationError) {
+      toast.error(validationError);
       return;
     }
 
-    toast.success("Transaksi barang keluar berhasil diperbarui.");
-    setEditingId(null);
-    setForm(initialForm);
-    setSubmitting(false);
-    await Promise.all([fetchRows(), fetchAvailableStocks()]);
+    setSubmitting(true);
+
+    try {
+      const response = await fetchWithTimeout(`/api/stock-out/${editingId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pembeli: form.pembeli.trim(),
+          harga_jual: Number(form.harga_jual),
+          tanggal_keluar: form.tanggal_keluar,
+        }),
+      });
+
+      if (!response.ok) {
+        const err = (await response.json().catch(() => ({ message: "Gagal memperbarui transaksi." }))) as {
+          message?: string;
+        };
+        throw new Error(err.message ?? "Gagal memperbarui transaksi.");
+      }
+
+      toast.success("Transaksi barang keluar berhasil diperbarui.");
+      setEditingId(null);
+      setForm(createInitialForm());
+      await Promise.all([fetchRows(false), fetchAvailableStocks()]);
+    } catch (updateError) {
+      toast.error(updateError instanceof Error ? updateError.message : "Gagal memperbarui transaksi. Periksa koneksi lalu coba lagi.");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function handleDelete(id: string) {
@@ -429,18 +602,19 @@ export function StockOutCrud() {
     setDeleteLoadingId(id);
 
     try {
-      const response = await fetch(`/api/stock-out/${id}`, { method: "DELETE" });
+      const response = await fetchWithTimeout(`/api/stock-out/${id}`, { method: "DELETE" });
 
       if (!response.ok) {
         const err = (await response.json().catch(() => ({ message: "Gagal menghapus barang keluar." }))) as {
           message?: string;
         };
-        toast.error(err.message ?? "Gagal menghapus barang keluar.");
-        return;
+        throw new Error(err.message ?? "Gagal menghapus barang keluar.");
       }
 
       toast.success("Data barang keluar berhasil dihapus.");
-      await Promise.all([fetchRows(), fetchAvailableStocks()]);
+      await Promise.all([fetchRows(false), fetchAvailableStocks()]);
+    } catch (deleteError) {
+      toast.error(deleteError instanceof Error ? deleteError.message : "Gagal menghapus barang keluar. Periksa koneksi lalu coba lagi.");
     } finally {
       setDeleteLoadingId(null);
     }
@@ -461,6 +635,26 @@ export function StockOutCrud() {
 
   return (
     <div className="grid min-w-0 gap-5 overflow-x-clip">
+      {rowsError || stocksError ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-3" role="alert">
+          <AlertTriangle className="size-4 text-destructive" />
+          <div className="min-w-0 flex-1 text-sm text-destructive">
+            {rowsError ? <p>Riwayat: {rowsError} Data terakhir tetap ditampilkan.</p> : null}
+            {stocksError ? <p>Stock tersedia: {stocksError} Data terakhir tetap ditampilkan.</p> : null}
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void Promise.all([fetchRows(), fetchAvailableStocks()])}
+            disabled={loading || submitting}
+          >
+            <RefreshCcw className={`size-4 ${loading ? "animate-spin" : ""}`} />
+            Coba Lagi
+          </Button>
+        </div>
+      ) : null}
+
       <section className="grid gap-4 lg:grid-cols-[1.2fr_1fr] *:min-w-0">
         <div className="min-w-0 rounded-xl border border-border bg-card p-4">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -478,8 +672,8 @@ export function StockOutCrud() {
 
           <div className="scrollbar-AR grid max-h-117.5 grid-cols-2 gap-3 overflow-y-auto pr-1 md:grid-cols-3">
             {filteredAvailableStocks.length === 0 ? (
-              <div className="text-muted-foreground col-span-full rounded-lg border border-dashed p-6 text-center text-sm">
-                Tidak ada stock tersedia.
+              <div className="col-span-full rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                {stocksError ? "Daftar stock gagal dimuat. Gunakan tombol Coba Lagi." : "Tidak ada stock tersedia."}
               </div>
             ) : (
               filteredAvailableStocks.map((item) => {
@@ -548,6 +742,9 @@ export function StockOutCrud() {
                 value={form.pembeli}
                 onChange={(e) => setForm((s) => ({ ...s, pembeli: e.target.value }))}
                 placeholder="Contoh: Budi"
+                minLength={2}
+                maxLength={100}
+                autoComplete="name"
                 required={Boolean(editingId) || Boolean(form.imei)}
               />
             </div>
@@ -558,6 +755,7 @@ export function StockOutCrud() {
                 id="tanggalKeluar"
                 value={form.tanggal_keluar}
                 onChange={(nextValue) => setForm((s) => ({ ...s, tanggal_keluar: nextValue }))}
+                disabledDate={(date) => date > new Date()}
               />
             </div>
 
@@ -567,6 +765,7 @@ export function StockOutCrud() {
                 id="hargaJual"
                 type="text"
                 inputMode="numeric"
+                maxLength={18}
                 value={formatRupiahInput(form.harga_jual)}
                 onChange={(e) =>
                   setForm((s) => ({
@@ -614,7 +813,7 @@ export function StockOutCrud() {
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
             <div>
               <h2 className="text-base font-semibold">Detail Item Checkout</h2>
-              <p className="text-muted-foreground text-sm">Review item draft sebelum melakukan checkout final.</p>
+              <p className="text-sm text-muted-foreground">Seluruh item diproses dalam satu transaksi atomik: semuanya berhasil atau seluruh batch dibatalkan.</p>
             </div>
             <span className="rounded-full bg-muted px-3 py-1 text-xs font-semibold">{draftItems.length} item</span>
           </div>
@@ -656,7 +855,7 @@ export function StockOutCrud() {
                         Keuntungan: <span className="font-semibold text-emerald-600 dark:text-emerald-400">{formatRupiah(keuntungan)}</span>
                       </p>
                     </div>
-                    <p className="text-muted-foreground mt-2 text-xs">Tanggal Keluar: {formatTanggal(item.tanggal_keluar)}</p>
+                    <p className="mt-2 text-xs text-muted-foreground">Tanggal Keluar: {formatLocalDateOnly(item.tanggal_keluar)}</p>
                   </div>
                 );
               })}
@@ -672,7 +871,7 @@ export function StockOutCrud() {
               <div className="flex justify-end">
                 <Button type="button" onClick={handleCheckoutDrafts} disabled={submitting || draftItems.length === 0} className="min-w-52">
                   <ShoppingCart className="size-4" />
-                  {submitting ? "Memproses Checkout..." : "Checkout Semua Item"}
+                  {submitting ? "Memproses Batch..." : "Proses Batch Checkout"}
                 </Button>
               </div>
             </div>
@@ -740,6 +939,9 @@ export function StockOutCrud() {
           </div>
         </div>
 
+        {rowsError && rows.length > 0 ? (
+          <p className="mb-3 text-xs text-amber-700 dark:text-amber-300">Menampilkan riwayat terakhir yang berhasil dimuat.</p>
+        ) : null}
         <div className="scrollbar-AR overflow-x-auto">
           <Table className="min-w-full md:min-w-220">
           <TableHeader>
@@ -764,8 +966,8 @@ export function StockOutCrud() {
               </TableRow>
             ) : rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="text-muted-foreground text-center">
-                  Belum ada data barang keluar.
+                <TableCell colSpan={9} className={rowsError ? "text-center text-destructive" : "text-center text-muted-foreground"}>
+                  {rowsError ? "Riwayat gagal dimuat. Gunakan tombol Coba Lagi." : "Belum ada data barang keluar."}
                 </TableCell>
               </TableRow>
             ) : filteredRows.length === 0 ? (
@@ -786,7 +988,7 @@ export function StockOutCrud() {
                   <TableCell className="max-w-36 truncate whitespace-nowrap font-semibold text-emerald-600 dark:text-emerald-400">
                     {formatRupiah(Number(row.keuntungan ?? 0))}
                   </TableCell>
-                  <TableCell className="max-w-36 truncate whitespace-nowrap">{formatTanggal(row.tanggal_keluar)}</TableCell>
+                  <TableCell className="max-w-36 truncate whitespace-nowrap">{formatLocalDateOnly(row.tanggal_keluar)}</TableCell>
                   <TableCell className="text-right">
                     <div className="inline-flex gap-2">
                       <Button

@@ -153,14 +153,16 @@ Buat atau perbarui `.env.local` di root repository:
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL=https://PROJECT_REFERENCE_BARU.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=PASTE_PUBLISHABLE_ATAU_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY=PASTE_SECRET_ATAU_SERVICE_ROLE_KEY
 
-NEXTAUTH_SECRET=PASTE_RANDOM_SECRET
+NEXTAUTH_SECRET=PASTE_RANDOM_SECRET_MINIMAL_32_KARAKTER
 NEXTAUTH_URL=http://localhost:3000
 
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=GANTI_DENGAN_PASSWORD_ADMIN_YANG_KUAT
+ADMIN_USERNAME=GANTI_USERNAME_BOOTSTRAP
+ADMIN_PASSWORD=PASSWORD_BOOTSTRAP_MINIMAL_12_KARAKTER
+
+CRON_SECRET=PASTE_RANDOM_SECRET_CRON
+ACTIVITY_RETENTION_DAYS=180
 ```
 
 Pastikan setiap variable hanya dideklarasikan satu kali dan tidak memiliki komentar setelah nilai.
@@ -201,17 +203,20 @@ Repository mengabaikan file `.env*` melalui `.gitignore`.
 
 SQL tersedia di folder `supabase/`.
 
-Karena beberapa file migration saat ini memiliki prefix tanggal yang sama, gunakan **Supabase SQL Editor** untuk setup awal. Jangan menjalankan `supabase db push` sebelum nama/version migration dibuat unik.
+Semua migration sekarang memiliki version timestamp unik. Jalankan melalui Supabase CLI (`supabase db push`) atau SQL Editor secara berurutan. Untuk database lama yang sudah memiliki migration history, rekonsiliasi dengan `supabase migration repair` sebelum push.
 
 ### 6.1 Urutan SQL
 
 | Urutan | File | Status |
 |---:|---|---|
-| 1 | `supabase/migrations/20260416_init_mrk_store.sql` | Wajib |
-| 2 | `supabase/migrations/20260416_add_activity_logs.sql` | Wajib |
-| 3 | `supabase/migrations/20260416_add_harga_to_stock_in.sql` | Lewati untuk database baru |
-| 4 | `supabase/migrations/20260417_add_admin_profiles.sql` | Wajib |
-| 5 | `supabase/seed/20260812_seed_demo_web.sql` | Opsional, direkomendasikan untuk demo |
+| 1 | `supabase/migrations/202604160001_init_mrk_store.sql` | Wajib |
+| 2 | `supabase/migrations/202604160002_add_activity_logs.sql` | Wajib |
+| 3 | `supabase/migrations/202604160003_add_harga_to_stock_in.sql` | Idempotent; tetap jalankan |
+| 4 | `supabase/migrations/202604170001_add_admin_profiles.sql` | Wajib |
+| 5 | `supabase/migrations/202608120001_normalize_admin_store_name.sql` | Wajib |
+| 6 | `supabase/migrations/202608130001_database_hardening.sql` | Wajib |
+| 7 | `supabase/migrations/202608130002_operational_transactions.sql` | Wajib |
+| 8 | `supabase/seed/20260812_seed_demo_web.sql` | Opsional; jangan gunakan untuk data toko production |
 
 Migration `add_harga_to_stock_in` tidak perlu dijalankan pada database baru karena kolom `harga` sudah dibuat oleh migration utama.
 
@@ -220,7 +225,7 @@ Migration `add_harga_to_stock_in` tidak perlu dijalankan pada database baru kare
 Salin SQL ke clipboard:
 
 ```powershell
-Get-Content -Raw .\supabase\migrations\20260416_init_mrk_store.sql | Set-Clipboard
+Get-Content -Raw .\supabase\migrations\202604160001_init_mrk_store.sql | Set-Clipboard
 ```
 
 Di Supabase Dashboard:
@@ -245,7 +250,7 @@ Migration ini membuat:
 ### 6.3 Jalankan migration activity log
 
 ```powershell
-Get-Content -Raw .\supabase\migrations\20260416_add_activity_logs.sql | Set-Clipboard
+Get-Content -Raw .\supabase\migrations\202604160002_add_activity_logs.sql | Set-Clipboard
 ```
 
 Paste pada query baru dan klik **Run**. Migration ini membuat tabel `activity_logs`, index, dan RLS policy.
@@ -253,7 +258,7 @@ Paste pada query baru dan klik **Run**. Migration ini membuat tabel `activity_lo
 ### 6.4 Jalankan migration admin profile
 
 ```powershell
-Get-Content -Raw .\supabase\migrations\20260417_add_admin_profiles.sql | Set-Clipboard
+Get-Content -Raw .\supabase\migrations\202604170001_add_admin_profiles.sql | Set-Clipboard
 ```
 
 Paste pada query baru dan klik **Run**. Migration ini membuat tabel `admin_profiles` serta profil awal:
@@ -680,19 +685,19 @@ Pastikan URL dan kedua key berasal dari project yang sama. Setelah memperbarui `
 Jika `stock`, `stock_in`, atau `stock_out` tidak ditemukan, jalankan:
 
 ```text
-supabase/migrations/20260416_init_mrk_store.sql
+supabase/migrations/202604160001_init_mrk_store.sql
 ```
 
 Jika `activity_logs` tidak ditemukan, jalankan:
 
 ```text
-supabase/migrations/20260416_add_activity_logs.sql
+supabase/migrations/202604160002_add_activity_logs.sql
 ```
 
 Jika `admin_profiles` tidak ditemukan, jalankan:
 
 ```text
-supabase/migrations/20260417_add_admin_profiles.sql
+supabase/migrations/202604170001_add_admin_profiles.sql
 ```
 
 ### Upload avatar gagal
@@ -701,7 +706,7 @@ Pastikan bucket `profile-avatars` tersedia, public, dan project menggunakan secr
 
 ### Login berhasil tetapi semua menu gagal
 
-Login dapat menggunakan fallback `ADMIN_USERNAME` dan `ADMIN_PASSWORD` ketika Supabase gagal. Login berhasil tidak membuktikan koneksi database sehat. Jalankan kembali probe DNS dan Supabase client pada bagian 10.
+Login sekarang fail-closed ketika Supabase gagal. Periksa `/api/health`, Vercel Function Logs, URL/key Supabase, dan status migration. Login tidak akan memakai kredensial fallback saat database tidak tersedia.
 
 ### Request ganda pada development
 

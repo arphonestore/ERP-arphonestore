@@ -1,7 +1,7 @@
 # AR Store Inventory Dashboard
 
 <p align="center">
-	<img src="public/assets/ar-logo.webp" alt="AR Store Logo" width="150" />
+	<img src="public/assets/logo-fix.svg" alt="AR Store Logo" width="150" />
 </p>
 
 <p align="center">
@@ -98,12 +98,13 @@ Buat file `.env.local` dari `.env.example`, lalu isi nilainya:
 
 ```env
 NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 NEXTAUTH_SECRET=
 NEXTAUTH_URL=http://localhost:3000
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=admin123
+ADMIN_USERNAME=
+ADMIN_PASSWORD=
+CRON_SECRET=
+ACTIVITY_RETENTION_DAYS=180
 ```
 
 Atau langsung copy:
@@ -134,12 +135,12 @@ npm run start
 Di Vercel, buka Project Settings > Environment Variables, lalu isi variabel berikut untuk scope `Production` (dan `Preview` jika dipakai):
 
 - `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `NEXTAUTH_SECRET`
 - `NEXTAUTH_URL`
-- `ADMIN_USERNAME`
-- `ADMIN_PASSWORD`
+- `ADMIN_USERNAME` dan `ADMIN_PASSWORD` hanya untuk bootstrap pertama
+- `CRON_SECRET`
+- `ACTIVITY_RETENTION_DAYS` (opsional, default `180`)
 
 Contoh nilai `NEXTAUTH_URL`:
 
@@ -152,6 +153,8 @@ Catatan penting:
 - Jangan pakai secret/key dari `.env.local` lama untuk public repository.
 - Gunakan nilai berbeda untuk local dan production.
 - Pastikan `NEXTAUTH_URL` sesuai domain aktif agar login callback tidak gagal.
+- Jalankan migration `supabase/migrations/` secara berurutan sebelum mempromosikan deployment.
+- Setelah login pertama berhasil dan hash admin tersimpan, hapus `ADMIN_USERNAME` dan `ADMIN_PASSWORD` dari environment Vercel.
 
 ---
 

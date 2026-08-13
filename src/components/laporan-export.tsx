@@ -1,29 +1,39 @@
 "use client";
 
-import jsPDF from "jspdf";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 
-type LaporanExportProps = {
+export type LaporanExportRow = {
+  tanggal: string;
+  type: string;
+  imei: string;
+  pembeli: string;
+  modal: number;
+  jual: number;
+  profit: number;
+};
+
+export type LaporanExportSnapshot = {
   fileName: string;
   periodeLabel: string;
   totalItem: number;
   totalModal: number;
   totalJual: number;
   totalProfit: number;
-  rows: Array<{
-    tanggal: string;
-    type: string;
-    imei: string;
-    pembeli: string;
-    modal: number;
-    jual: number;
-    profit: number;
-  }>;
-  disabled?: boolean;
+  rows: LaporanExportRow[];
+  loadedAt: Date;
 };
+
+type LaporanExportProps = Omit<LaporanExportSnapshot, "loadedAt"> & {
+  loadedAt: Date | null;
+  disabled?: boolean;
+  maxSnapshotAgeMs?: number;
+  onPrepareExport?: () => Promise<LaporanExportSnapshot | null>;
+};
+
+const JAKARTA_TIME_ZONE = "Asia/Jakarta";
 
 function formatRupiah(value: number) {
   return new Intl.NumberFormat("id-ID", {
@@ -33,8 +43,31 @@ function formatRupiah(value: number) {
   }).format(value);
 }
 
+function parseDateOnly(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return null;
+
+  const parsed = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 function formatTanggal(value: string) {
-  return new Intl.DateTimeFormat("id-ID", { dateStyle: "medium" }).format(new Date(value));
+  const parsed = parseDateOnly(value);
+  if (!parsed) return value;
+
+  return new Intl.DateTimeFormat("id-ID", { dateStyle: "medium" }).format(parsed);
+}
+
+function formatJakartaTimestamp(value: Date) {
+  return `${new Intl.DateTimeFormat("id-ID", {
+    timeZone: JAKARTA_TIME_ZONE,
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(value)} WIB`;
 }
 
 async function loadLogoAsPngDataUrl(src: string) {
@@ -81,7 +114,10 @@ export function LaporanExport({
   totalJual,
   totalProfit,
   rows,
+  loadedAt,
   disabled = false,
+  maxSnapshotAgeMs = 5 * 60_000,
+  onPrepareExport,
 }: LaporanExportProps) {
   const [exporting, setExporting] = useState(false);
 
@@ -93,6 +129,22 @@ export function LaporanExport({
     setExporting(true);
 
     try {
+      const fallbackSnapshot: LaporanExportSnapshot | null = loadedAt
+        ? { fileName, periodeLabel, totalItem, totalModal, totalJual, totalProfit, rows, loadedAt }
+        : null;
+      const snapshot = onPrepareExport ? await onPrepareExport() : fallbackSnapshot;
+
+      if (!snapshot) {
+        toast.error("Data terbaru tidak dapat dimuat. Export dibatalkan agar PDF tidak memakai snapshot usang.");
+        return;
+      }
+
+      if (Date.now() - snapshot.loadedAt.getTime() > maxSnapshotAgeMs) {
+        toast.error("Snapshot laporan sudah terlalu lama. Muat ulang data sebelum export.");
+        return;
+      }
+
+      const { default: jsPDF } = await import("jspdf");
       const pdf = new jsPDF({
         orientation: "portrait",
         unit: "mm",
@@ -104,16 +156,16 @@ export function LaporanExport({
       const margin = 10;
       const usableWidth = pageWidth - margin * 2;
       const logoSize = 18;
-
       let y = margin;
 
       const ensureSpace = (requiredHeight: number) => {
         if (y + requiredHeight <= pageHeight - margin) {
-          return;
+          return false;
         }
 
         pdf.addPage();
         y = margin;
+        return true;
       };
 
       const drawText = (text: string, x: number, nextY = 6) => {
@@ -124,7 +176,7 @@ export function LaporanExport({
       let logoDrawn = false;
 
       try {
-        const logoDataUrl = await loadLogoAsPngDataUrl("/assets/ar-logo.webp");
+        const logoDataUrl = await loadLogoAsPngDataUrl("/assets/logo-fix.svg");
         pdf.addImage(logoDataUrl, "PNG", margin, y, logoSize, logoSize);
         logoDrawn = true;
       } catch {
@@ -142,20 +194,11 @@ export function LaporanExport({
 
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(10);
-      drawText(`Periode: ${periodeLabel}`, textStartX, 5);
-      drawText(
-        `Dicetak: ${new Intl.DateTimeFormat("id-ID", {
-          day: "2-digit",
-          month: "long",
-          year: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        }).format(new Date())}`,
-        textStartX,
-        7
-      );
+      drawText(`Periode: ${snapshot.periodeLabel}`, textStartX, 5);
+      drawText(`Snapshot data: ${formatJakartaTimestamp(snapshot.loadedAt)}`, textStartX, 5);
+      drawText(`Dicetak: ${formatJakartaTimestamp(new Date())}`, textStartX, 7);
 
-      y = Math.max(y, margin + logoSize + 4);
+      y = Math.max(y, margin + logoSize + 6);
 
       ensureSpace(30);
       pdf.setDrawColor(220, 220, 220);
@@ -163,10 +206,10 @@ export function LaporanExport({
 
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(10);
-      pdf.text(`Total Item: ${totalItem}`, margin + 3, y + 6);
-      pdf.text(`Total Modal: ${formatRupiah(totalModal)}`, margin + 3, y + 12);
-      pdf.text(`Total Harga Jual: ${formatRupiah(totalJual)}`, margin + 3, y + 18);
-      pdf.text(`Profit: ${formatRupiah(totalProfit)}`, margin + 3, y + 24);
+      pdf.text(`Total Item: ${snapshot.totalItem}`, margin + 3, y + 6);
+      pdf.text(`Total Modal: ${formatRupiah(snapshot.totalModal)}`, margin + 3, y + 12);
+      pdf.text(`Total Harga Jual: ${formatRupiah(snapshot.totalJual)}`, margin + 3, y + 18);
+      pdf.text(`Laba Kotor: ${formatRupiah(snapshot.totalProfit)}`, margin + 3, y + 24);
 
       y += 34;
       ensureSpace(10);
@@ -178,7 +221,7 @@ export function LaporanExport({
         { title: "Pembeli", width: 30 },
         { title: "Modal", width: 24 },
         { title: "Jual", width: 24 },
-        { title: "Profit", width: 26 },
+        { title: "Laba", width: 26 },
       ];
 
       const drawTableHeader = () => {
@@ -195,12 +238,22 @@ export function LaporanExport({
         y += 8;
       };
 
-      drawTableHeader();
+      const wrapCell = (value: string, width: number) => {
+        const lines = pdf.splitTextToSize(value, width - 3) as string[];
+        const maxLines = 10;
 
+        if (lines.length <= maxLines) return lines;
+
+        const visible = lines.slice(0, maxLines);
+        visible[maxLines - 1] = `${visible[maxLines - 1].slice(0, -1)}…`;
+        return visible;
+      };
+
+      drawTableHeader();
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(8.5);
 
-      rows.forEach((row) => {
+      for (const row of snapshot.rows) {
         const values = [
           formatTanggal(row.tanggal),
           row.type,
@@ -210,16 +263,11 @@ export function LaporanExport({
           formatRupiah(row.jual),
           formatRupiah(row.profit),
         ];
+        const wrappedValues = values.map((value, columnIndex) => wrapCell(value, columns[columnIndex].width));
+        const rowHeight = Math.max(...wrappedValues.map((lines) => lines.length)) * 4 + 3;
+        const pageAdded = ensureSpace(rowHeight + 1);
 
-        const lineCounts = values.map((value, columnIndex) => {
-          const maxTextWidth = columns[columnIndex].width - 3;
-          return pdf.splitTextToSize(value, maxTextWidth).length;
-        });
-
-        const rowHeight = Math.max(...lineCounts) * 4 + 3;
-        ensureSpace(rowHeight + 1);
-
-        if (y === margin) {
+        if (pageAdded) {
           drawTableHeader();
           pdf.setFont("helvetica", "normal");
           pdf.setFontSize(8.5);
@@ -227,35 +275,43 @@ export function LaporanExport({
 
         let x = margin;
 
-        values.forEach((value, columnIndex) => {
+        wrappedValues.forEach((wrapped, columnIndex) => {
           const column = columns[columnIndex];
-          const wrapped = pdf.splitTextToSize(value, column.width - 3);
-
           pdf.rect(x, y, column.width, rowHeight);
           pdf.text(wrapped, x + 1.5, y + 4);
           x += column.width;
         });
 
         y += rowHeight;
-      });
+      }
 
-      if (rows.length === 0) {
+      if (snapshot.rows.length === 0) {
         ensureSpace(10);
         pdf.setFont("helvetica", "italic");
         pdf.text("Tidak ada data transaksi pada periode ini.", margin, y + 6);
       }
 
-      pdf.save(`${fileName}.pdf`);
-    } catch {
-      toast.error("Gagal export PDF. Coba lagi atau ubah mode export.");
+      const pageCount = pdf.getNumberOfPages();
+      for (let page = 1; page <= pageCount; page += 1) {
+        pdf.setPage(page);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(8);
+        pdf.setTextColor(110);
+        pdf.text(`Halaman ${page} dari ${pageCount}`, pageWidth - margin, pageHeight - 5, { align: "right" });
+      }
+
+      pdf.save(`${snapshot.fileName}.pdf`);
+    } catch (exportError) {
+      const message = exportError instanceof Error ? exportError.message : "Gagal export PDF.";
+      toast.error(`${message} Coba lagi.`);
     } finally {
       setExporting(false);
     }
   };
 
   return (
-    <Button variant="default" onClick={handleExportPdf} disabled={disabled || exporting}>
-      {exporting ? "Mengekspor..." : "Export PDF"}
+    <Button type="button" variant="default" onClick={() => void handleExportPdf()} disabled={disabled || exporting}>
+      {exporting ? "Memuat data & mengekspor..." : "Export PDF"}
     </Button>
   );
 }

@@ -1,4 +1,6 @@
-import { useEffect, useRef } from 'react';
+"use client";
+
+import { useEffect, useRef, useState } from 'react';
 import {
   Clock,
   Mesh,
@@ -202,6 +204,10 @@ void main() {
 `;
 
 const MAX_GRADIENT_STOPS = 8;
+const DEFAULT_ENABLED_WAVES: Array<'top' | 'middle' | 'bottom'> = ['top', 'middle', 'bottom'];
+const DEFAULT_LINE_COUNT = [6];
+const DEFAULT_LINE_DISTANCE = [5];
+const DEFAULT_BOTTOM_WAVE_POSITION = { x: 2.0, y: -0.7, rotate: -1 };
 
 type WavePosition = {
   x: number;
@@ -253,12 +259,12 @@ function hexToVec3(hex: string): Vector3 {
 
 export default function FloatingLines({
   linesGradient,
-  enabledWaves = ['top', 'middle', 'bottom'],
-  lineCount = [6],
-  lineDistance = [5],
+  enabledWaves = DEFAULT_ENABLED_WAVES,
+  lineCount = DEFAULT_LINE_COUNT,
+  lineDistance = DEFAULT_LINE_DISTANCE,
   topWavePosition,
   middleWavePosition,
-  bottomWavePosition = { x: 2.0, y: -0.7, rotate: -1 },
+  bottomWavePosition = DEFAULT_BOTTOM_WAVE_POSITION,
   animationSpeed = 1,
   interactive = true,
   bendRadius = 5.0,
@@ -275,6 +281,9 @@ export default function FloatingLines({
   const currentInfluenceRef = useRef<number>(0);
   const targetParallaxRef = useRef<Vector2>(new Vector2(0, 0));
   const currentParallaxRef = useRef<Vector2>(new Vector2(0, 0));
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
 
   const getLineCount = (waveType: 'top' | 'middle' | 'bottom'): number => {
     if (typeof lineCount === 'number') return lineCount;
@@ -299,8 +308,15 @@ export default function FloatingLines({
   const bottomLineDistance = enabledWaves.includes('bottom') ? getLineDistance('bottom') * 0.01 : 0.01;
 
   useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const handleChange = (event: MediaQueryListEvent) => setPrefersReducedMotion(event.matches);
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
+
+  useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    if (!container || prefersReducedMotion) return;
 
     let active = true;
 
@@ -309,10 +325,20 @@ export default function FloatingLines({
     const camera = new OrthographicCamera(-1, 1, 1, -1, 0, 1);
     camera.position.z = 1;
 
-    const renderer = new WebGLRenderer({ antialias: true, alpha: false });
+    let renderer: WebGLRenderer;
+
+    try {
+      renderer = new WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'low-power' });
+    } catch {
+      return;
+    }
+
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.domElement.style.position = 'absolute';
+    renderer.domElement.style.inset = '0';
     renderer.domElement.style.width = '100%';
     renderer.domElement.style.height = '100%';
+    renderer.domElement.setAttribute('aria-hidden', 'true');
     container.appendChild(renderer.domElement);
 
     const uniforms = {
@@ -440,8 +466,18 @@ export default function FloatingLines({
     }
 
     let raf = 0;
+    let pageVisible = !document.hidden;
+    let containerVisible = true;
+
+    const scheduleRender = () => {
+      if (active && pageVisible && containerVisible && raf === 0) {
+        raf = requestAnimationFrame(renderLoop);
+      }
+    };
+
     const renderLoop = () => {
-      if (!active) return;
+      raf = 0;
+      if (!active || !pageVisible || !containerVisible) return;
 
       uniforms.iTime.value = clock.getElapsedTime();
 
@@ -459,14 +495,40 @@ export default function FloatingLines({
       }
 
       renderer.render(scene, camera);
-      raf = requestAnimationFrame(renderLoop);
+      scheduleRender();
     };
-    renderLoop();
+
+    const handleVisibilityChange = () => {
+      pageVisible = !document.hidden;
+      if (!pageVisible && raf !== 0) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
+      scheduleRender();
+    };
+
+    const intersectionObserver =
+      typeof IntersectionObserver !== 'undefined'
+        ? new IntersectionObserver((entries) => {
+            containerVisible = entries[0]?.isIntersecting ?? true;
+            if (!containerVisible && raf !== 0) {
+              cancelAnimationFrame(raf);
+              raf = 0;
+            }
+            scheduleRender();
+          })
+        : null;
+
+    intersectionObserver?.observe(container);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    scheduleRender();
 
     return () => {
       active = false;
 
-      cancelAnimationFrame(raf);
+      if (raf !== 0) cancelAnimationFrame(raf);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      intersectionObserver?.disconnect();
 
       if (ro) ro.disconnect();
 
@@ -503,15 +565,17 @@ export default function FloatingLines({
     bendStrength,
     mouseDamping,
     parallax,
-    parallaxStrength
+    parallaxStrength,
+    prefersReducedMotion
   ]);
 
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full overflow-hidden floating-lines-container"
+      aria-hidden="true"
+      className="floating-lines-container relative h-full w-full overflow-hidden bg-[radial-gradient(circle_at_30%_40%,rgba(1,141,138,0.5),transparent_35%),linear-gradient(145deg,#18181b,#09090b)]"
       style={{
-        mixBlendMode: mixBlendMode
+        mixBlendMode
       }}
     />
   );

@@ -14,6 +14,8 @@ export interface AdminProfile {
   full_name: string | null;
   avatar_url: string | null;
   password_hash: string | null;
+  session_version: number;
+  password_changed_at: string | null;
   updated_at: string;
 }
 
@@ -23,21 +25,25 @@ export interface Stock {
   imei: string;
   harga: number;
   status: StockStatus;
+  archived_at: string | null;
   created_at: string;
 }
 
 export interface StockIn {
   id: string;
+  stock_id: string | null;
   type: string;
   imei: string;
   harga: number;
   penjual: string;
   tanggal_masuk: string;
+  voided_at: string | null;
   created_at: string;
 }
 
 export interface StockOut {
   id: string;
+  stock_id: string | null;
   type: string;
   imei: string;
   pembeli: string;
@@ -45,6 +51,8 @@ export interface StockOut {
   harga_jual: number;
   keuntungan: number;
   tanggal_keluar: string;
+  voided_at: string | null;
+  idempotency_key: string | null;
   created_at: string;
 }
 
@@ -91,6 +99,18 @@ export interface StockOutFormInput {
   hargaModal: number;
   hargaJual: number;
   tanggalKeluar: string;
+}
+
+export interface PaginationMetadata {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  pagination: PaginationMetadata;
 }
 
 export type SupabaseSuccess<T> = {
@@ -147,6 +167,7 @@ export interface Database {
           imei: string;
           harga: number;
           status?: StockStatus;
+          archived_at?: string | null;
           created_at?: string;
         };
         Update: {
@@ -154,6 +175,7 @@ export interface Database {
           imei?: string;
           harga?: number;
           status?: StockStatus;
+          archived_at?: string | null;
           created_at?: string;
         };
         Relationships: [];
@@ -162,19 +184,23 @@ export interface Database {
         Row: StockIn;
         Insert: {
           id?: string;
+          stock_id?: string | null;
           type: string;
           imei: string;
           harga: number;
           penjual: string;
           tanggal_masuk: string;
+          voided_at?: string | null;
           created_at?: string;
         };
         Update: {
+          stock_id?: string | null;
           type?: string;
           imei?: string;
           harga?: number;
           penjual?: string;
           tanggal_masuk?: string;
+          voided_at?: string | null;
           created_at?: string;
         };
         Relationships: [];
@@ -183,21 +209,27 @@ export interface Database {
         Row: StockOut;
         Insert: {
           id?: string;
+          stock_id?: string | null;
           type: string;
           imei: string;
           pembeli: string;
           harga_modal: number;
           harga_jual: number;
           tanggal_keluar: string;
+          voided_at?: string | null;
+          idempotency_key?: string | null;
           created_at?: string;
         };
         Update: {
+          stock_id?: string | null;
           type?: string;
           imei?: string;
           pembeli?: string;
           harga_modal?: number;
           harga_jual?: number;
           tanggal_keluar?: string;
+          voided_at?: string | null;
+          idempotency_key?: string | null;
           created_at?: string;
         };
         Relationships: [];
@@ -239,6 +271,8 @@ export interface Database {
           full_name?: string | null;
           avatar_url?: string | null;
           password_hash?: string | null;
+          session_version?: number;
+          password_changed_at?: string | null;
           updated_at?: string;
         };
         Update: {
@@ -246,6 +280,8 @@ export interface Database {
           full_name?: string | null;
           avatar_url?: string | null;
           password_hash?: string | null;
+          session_version?: number;
+          password_changed_at?: string | null;
           updated_at?: string;
         };
         Relationships: [];

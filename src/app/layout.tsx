@@ -14,6 +14,25 @@ const interFont = Inter({
 export const metadata: Metadata = {
   title: "AR Store | Inventory Handphone",
   description: "Sistem inventory handphone untuk AR Store",
+  applicationName: "AR Store Inventory",
+  manifest: "/manifest.json",
+  icons: {
+    icon: [
+      { url: "/assets/logo-fix.svg", type: "image/svg+xml" },
+      { url: "/favicon.ico", sizes: "any" },
+    ],
+    apple: [{ url: "/apple-icon.png", sizes: "180x180", type: "image/png" }],
+  },
+  robots: {
+    index: false,
+    follow: false,
+    nocache: true,
+    googleBot: {
+      index: false,
+      follow: false,
+      noimageindex: true,
+    },
+  },
 };
 
 export default function RootLayout({

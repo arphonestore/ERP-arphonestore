@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, Funnel, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, Funnel, Pencil, Plus, RefreshCcw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -22,7 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatRupiah, formatTanggal } from "@/lib/format";
+import { formatRupiah } from "@/lib/format";
 import type { Stock, StockIn } from "@/types";
 
 type FormState = {
@@ -43,6 +43,27 @@ const initialForm: FormState = {
 
 function parseCurrencyToNumberString(value: string) {
   return value.replace(/\D/g, "");
+}
+
+function toLocalMonthKey(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function parseLocalDateOnly(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.slice(0, 10));
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? date : null;
+}
+
+function formatLocalDateOnly(value: string) {
+  const date = parseLocalDateOnly(value);
+  return date ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium" }).format(date) : value;
 }
 
 function formatRupiahInput(value: string) {
@@ -74,37 +95,50 @@ export function StockInCrud() {
   const [deleteLoadingId, setDeleteLoadingId] = useState<string | null>(null);
   const [deleteCandidateId, setDeleteCandidateId] = useState<string | null>(null);
   const [editCandidate, setEditCandidate] = useState<StockIn | null>(null);
+  const [rowsError, setRowsError] = useState<string | null>(null);
+  const [stockError, setStockError] = useState<string | null>(null);
 
-  async function fetchRows() {
-    const response = await fetch("/api/stock-in", { cache: "no-store" });
+  async function fetchRows(showLoading = true) {
+    if (showLoading) setLoading(true);
+    setRowsError(null);
 
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => ({ message: "Gagal memuat barang masuk." }))) as {
-        message?: string;
-      };
-      toast.error(payload.message ?? "Gagal memuat barang masuk.");
-      setLoading(false);
-      return;
+    try {
+      const response = await fetch("/api/stock-in", { cache: "no-store" });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({ message: "Gagal memuat barang masuk." }))) as {
+          message?: string;
+        };
+        throw new Error(payload.message ?? "Gagal memuat barang masuk.");
+      }
+
+      const data = (await response.json()) as StockIn[];
+      setRows(data);
+    } catch (loadError) {
+      setRowsError(loadError instanceof Error ? loadError.message : "Gagal memuat barang masuk. Periksa koneksi lalu coba lagi.");
+    } finally {
+      if (showLoading) setLoading(false);
     }
-
-    const data = (await response.json()) as StockIn[];
-    setRows(data);
-    setLoading(false);
   }
 
   async function fetchStockRows() {
-    const response = await fetch("/api/stock", { cache: "no-store" });
+    setStockError(null);
 
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => ({ message: "Gagal memuat data stock." }))) as {
-        message?: string;
-      };
-      toast.error(payload.message ?? "Gagal memuat data stock.");
-      return;
+    try {
+      const response = await fetch("/api/stock", { cache: "no-store" });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({ message: "Gagal memuat data stock." }))) as {
+          message?: string;
+        };
+        throw new Error(payload.message ?? "Gagal memuat data stock.");
+      }
+
+      const data = (await response.json()) as Stock[];
+      setStockRows(data);
+    } catch (loadError) {
+      setStockError(loadError instanceof Error ? loadError.message : "Gagal memuat data stock. Periksa koneksi lalu coba lagi.");
     }
-
-    const data = (await response.json()) as Stock[];
-    setStockRows(data);
   }
 
   useEffect(() => {
@@ -159,18 +193,18 @@ export function StockInCrud() {
     const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
     return rows.filter((row) => {
-      const masukDate = new Date(row.tanggal_masuk);
-      const validDate = !Number.isNaN(masukDate.getTime());
+      const masukDate = parseLocalDateOnly(row.tanggal_masuk);
+      const validDate = masukDate !== null;
 
       const matchesPeriod =
         periodFilter === "all"
           ? true
           : validDate &&
             (periodFilter === "today"
-              ? masukDate >= startOfToday && masukDate < startOfTomorrow
+              ? masukDate! >= startOfToday && masukDate! < startOfTomorrow
               : periodFilter === "week"
-                ? masukDate >= startOfWeek && masukDate < startOfTomorrow
-                : masukDate >= startOfMonth && masukDate < startOfNextMonth);
+                ? masukDate! >= startOfWeek && masukDate! < startOfTomorrow
+                : masukDate! >= startOfMonth && masukDate! < startOfNextMonth);
 
       const matchesKeyword =
         !keyword || [row.type, row.imei, row.penjual, row.tanggal_masuk, String(row.harga)].some((value) => value.toLowerCase().includes(keyword));
@@ -192,7 +226,7 @@ export function StockInCrud() {
     const totalAccumulatedStockIn = filteredRows.reduce((sum, row) => sum + Number(row.harga), 0);
     const totalModal = stockRows.reduce((sum, row) => sum + Number(row.harga), 0);
     const uniqueSuppliers = new Set(filteredRows.map((row) => row.penjual.trim().toLowerCase()).filter(Boolean)).size;
-    const currentMonthKey = new Date().toISOString().slice(0, 7);
+    const currentMonthKey = toLocalMonthKey();
     const monthItems = rows.filter((row) => row.tanggal_masuk.slice(0, 7) === currentMonthKey).length;
 
     return {
@@ -211,14 +245,37 @@ export function StockInCrud() {
       return;
     }
 
-    setSubmitting(true);
+    const type = form.type.trim();
+    const imei = form.imei.trim();
+    const penjual = form.penjual.trim();
+    const harga = Number(form.harga);
 
-    if (!form.tanggal_masuk) {
-      toast.error("Tanggal masuk wajib dipilih.");
-      setSubmitting(false);
+    if (type.length < 2 || type.length > 100) {
+      toast.error("Type barang wajib terdiri dari 2-100 karakter.");
       return;
     }
 
+    if (!/^\d{6,20}$/.test(imei)) {
+      toast.error("IMEI wajib berupa 6-20 digit angka.");
+      return;
+    }
+
+    if (!Number.isSafeInteger(harga) || harga <= 0) {
+      toast.error("Harga modal harus berupa angka bulat lebih dari 0.");
+      return;
+    }
+
+    if (penjual.length < 2 || penjual.length > 100) {
+      toast.error("Nama penjual wajib terdiri dari 2-100 karakter.");
+      return;
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(form.tanggal_masuk)) {
+      toast.error("Tanggal masuk wajib dipilih dengan format valid.");
+      return;
+    }
+
+    setSubmitting(true);
     const endpoint = editingId ? `/api/stock-in/${editingId}` : "/api/stock-in";
     const method = editingId ? "PUT" : "POST";
 
@@ -226,22 +283,23 @@ export function StockInCrud() {
       const response = await fetch(endpoint, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, type, imei, penjual, harga: String(harga) }),
       });
 
       if (!response.ok) {
         const err = (await response.json().catch(() => ({ message: "Gagal menyimpan barang masuk." }))) as {
           message?: string;
         };
-        toast.error(err.message ?? "Gagal menyimpan barang masuk.");
-        return;
+        throw new Error(err.message ?? "Gagal menyimpan barang masuk.");
       }
 
       setForm(initialForm);
       setEditingId(null);
       setDialogOpen(false);
       toast.success("Data barang masuk berhasil disimpan.");
-      await Promise.all([fetchRows(), fetchStockRows()]);
+      await Promise.all([fetchRows(false), fetchStockRows()]);
+    } catch (submitError) {
+      toast.error(submitError instanceof Error ? submitError.message : "Gagal menyimpan barang masuk. Periksa koneksi lalu coba lagi.");
     } finally {
       setSubmitting(false);
     }
@@ -261,12 +319,13 @@ export function StockInCrud() {
         const err = (await response.json().catch(() => ({ message: "Gagal menghapus barang masuk." }))) as {
           message?: string;
         };
-        toast.error(err.message ?? "Gagal menghapus barang masuk.");
-        return;
+        throw new Error(err.message ?? "Gagal menghapus barang masuk.");
       }
 
       toast.success("Data barang masuk berhasil dihapus.");
-      await Promise.all([fetchRows(), fetchStockRows()]);
+      await Promise.all([fetchRows(false), fetchStockRows()]);
+    } catch (deleteError) {
+      toast.error(deleteError instanceof Error ? deleteError.message : "Gagal menghapus barang masuk. Periksa koneksi lalu coba lagi.");
     } finally {
       setDeleteLoadingId(null);
     }
@@ -293,6 +352,20 @@ export function StockInCrud() {
 
   return (
     <div className="grid min-w-0 gap-5 overflow-x-clip">
+      {rowsError || stockError ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-3" role="alert">
+          <AlertTriangle className="size-4 text-destructive" />
+          <div className="min-w-0 flex-1 text-sm text-destructive">
+            {rowsError ? <p>Barang masuk: {rowsError} Data terakhir tetap ditampilkan.</p> : null}
+            {stockError ? <p>Ringkasan stock: {stockError} Nilai terakhir tetap ditampilkan.</p> : null}
+          </div>
+          <Button type="button" variant="outline" size="sm" onClick={() => void Promise.all([fetchRows(), fetchStockRows()])} disabled={loading}>
+            <RefreshCcw className={`size-4 ${loading ? "animate-spin" : ""}`} />
+            Coba Lagi
+          </Button>
+        </div>
+      ) : null}
+
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5 *:min-w-0">
         <Card className="min-w-0 p-4 sm:p-6">
           <div className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 lg:flex lg:flex-col lg:items-start lg:gap-2">
@@ -433,8 +506,8 @@ export function StockInCrud() {
               </TableRow>
             ) : rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-muted-foreground text-center">
-                  Belum ada data barang masuk.
+                <TableCell colSpan={7} className={rowsError ? "text-center text-destructive" : "text-center text-muted-foreground"}>
+                  {rowsError ? "Data gagal dimuat. Gunakan tombol Coba Lagi." : "Belum ada data barang masuk."}
                 </TableCell>
               </TableRow>
             ) : filteredRows.length === 0 ? (
@@ -451,7 +524,7 @@ export function StockInCrud() {
                   <TableCell className="whitespace-nowrap font-mono">{row.imei}</TableCell>
                   <TableCell className="max-w-36 truncate whitespace-nowrap">{formatRupiah(Number(row.harga))}</TableCell>
                   <TableCell className="max-w-36 truncate whitespace-nowrap">{row.penjual}</TableCell>
-                  <TableCell className="max-w-36 truncate whitespace-nowrap">{formatTanggal(row.tanggal_masuk)}</TableCell>
+                  <TableCell className="max-w-36 truncate whitespace-nowrap">{formatLocalDateOnly(row.tanggal_masuk)}</TableCell>
                   <TableCell className="text-right">
                     <div className="inline-flex gap-2">
                       <Button
@@ -552,6 +625,8 @@ export function StockInCrud() {
                   value={form.type}
                   onChange={(e) => setForm((s) => ({ ...s, type: e.target.value }))}
                   placeholder="Contoh: iPhone 13"
+                  minLength={2}
+                  maxLength={100}
                   required
                 />
               </div>
@@ -563,6 +638,10 @@ export function StockInCrud() {
                   value={form.imei}
                   onChange={(e) => setForm((s) => ({ ...s, imei: e.target.value }))}
                   placeholder="Masukkan nomor IMEI"
+                  inputMode="numeric"
+                  pattern="[0-9]{6,20}"
+                  minLength={6}
+                  maxLength={20}
                   required
                 />
               </div>
@@ -573,6 +652,7 @@ export function StockInCrud() {
                   id="harga"
                   type="text"
                   inputMode="numeric"
+                  maxLength={18}
                   value={formatRupiahInput(form.harga)}
                   onChange={(e) =>
                     setForm((s) => ({
@@ -592,6 +672,8 @@ export function StockInCrud() {
                   value={form.penjual}
                   onChange={(e) => setForm((s) => ({ ...s, penjual: e.target.value }))}
                   placeholder="Contoh: Supplier Jaya"
+                  minLength={2}
+                  maxLength={100}
                   required
                 />
               </div>

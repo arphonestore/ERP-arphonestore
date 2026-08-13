@@ -1,63 +1,76 @@
-import { NextResponse } from "next/server";
-
 import { requireApiAuth } from "@/lib/api-auth";
-import { logActivity } from "@/lib/activity-log";
+import {
+  escapePostgrestSearch,
+  fetchAllPagesWithCount,
+  fetchPage,
+  paginationMetadata,
+  type QueryBuilder,
+  type RangeQueryFactory,
+} from "@/lib/api/database";
+import { stockListQuerySchema } from "@/lib/api/contracts";
+import {
+  apiErrorResponse,
+  jsonNoStore,
+  methodNotAllowed,
+  parseSearchParams,
+} from "@/lib/api/http";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import type { Stock } from "@/types";
 
-export async function GET() {
-  const authResult = await requireApiAuth();
-  if (!authResult.ok) return authResult.response;
+function stockQuery(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  filters: { status: "available" | "sold" | "all"; search?: string }
+): RangeQueryFactory<Stock> {
+  return ({ count, head }) => {
+    let query = supabase
+      .from("stock")
+      .select("id, type, imei, harga, status, archived_at, created_at", { count, head })
+      .is("archived_at", null);
 
-  const supabaseAdmin = getSupabaseAdmin();
+    if (filters.status !== "all") {
+      query = query.eq("status", filters.status);
+    }
 
-  const { data, error } = await supabaseAdmin
-    .from("stock")
-    .select("*")
-    .eq("status", "available")
-    .order("created_at", { ascending: false });
+    if (filters.search) {
+      const search = escapePostgrestSearch(filters.search);
+      query = query.or(`type.ilike.%${search}%,imei.ilike.%${search}%`);
+    }
 
-  if (error) {
-    return NextResponse.json({ message: error.message }, { status: 500 });
-  }
-
-  return NextResponse.json(data);
+    return query
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false }) as unknown as QueryBuilder<Stock>;
+  };
 }
 
-export async function POST(request: Request) {
+export async function GET(request: Request) {
   const authResult = await requireApiAuth();
   if (!authResult.ok) return authResult.response;
 
-  const supabaseAdmin = getSupabaseAdmin();
+  const parsedQuery = parseSearchParams(request, stockListQuerySchema);
+  if (!parsedQuery.ok) return parsedQuery.response;
 
-  const body = await request.json();
+  const { page, pageSize, paginated, search, status } = parsedQuery.data;
 
-  const { data, error } = await supabaseAdmin
-    .from("stock")
-    .insert(
-      {
-        type: body.type,
-        imei: body.imei,
-        harga: Number(body.harga),
-        status: body.status ?? "available",
-      } as never
-    )
-    .select("*")
-    .single();
+  try {
+    const buildQuery = stockQuery(getSupabaseAdmin(), { status, search });
 
-  if (error) {
-    return NextResponse.json({ message: error.message }, { status: 400 });
+    if (paginated) {
+      const result = await fetchPage(buildQuery, page, pageSize);
+      return jsonNoStore({
+        data: result.data,
+        pagination: paginationMetadata(page, pageSize, result.total),
+      });
+    }
+
+    const result = await fetchAllPagesWithCount(buildQuery, { label: "Data stock" });
+    return jsonNoStore(result.data, {
+      headers: { "X-Total-Count": String(result.total) },
+    });
+  } catch (error) {
+    return apiErrorResponse(error, "stock.GET");
   }
+}
 
-  await logActivity({
-    supabase: supabaseAdmin,
-    user: authResult.session.user,
-    action: "create",
-    module: "stock",
-    entityId: (data as { id: string }).id,
-    entityLabel: `${body.type} (${body.imei})`,
-    description: "Menambahkan data stock baru.",
-    afterData: data as Record<string, unknown>,
-  });
-
-  return NextResponse.json(data, { status: 201 });
+export async function POST() {
+  return methodNotAllowed(["GET"]);
 }

@@ -153,6 +153,8 @@ export function ActivityDashboard() {
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [infoPopoverOpen, setInfoPopoverOpen] = useState(false);
   const infoPopoverRef = useRef<HTMLDivElement | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const requestSequenceRef = useRef(0);
 
   function toggleExpanded(id: string) {
     setExpandedRows((prev) => ({
@@ -162,26 +164,34 @@ export function ActivityDashboard() {
   }
 
   const loadRows = useCallback(async (showLoading: boolean) => {
-    if (showLoading) {
-      setLoading(true);
-    }
+    const requestId = ++requestSequenceRef.current;
+    abortControllerRef.current?.abort();
 
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    if (showLoading) setLoading(true);
     setError(null);
 
-    const response = await fetch("/api/activity", { cache: "no-store" });
+    try {
+      const response = await fetch("/api/activity", { cache: "no-store", signal: controller.signal });
 
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => ({ message: "Gagal memuat activity log." }))) as {
-        message?: string;
-      };
-      setError(payload.message ?? "Gagal memuat activity log.");
-      setLoading(false);
-      return;
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({ message: "Gagal memuat activity log." }))) as {
+          message?: string;
+        };
+        throw new Error(payload.message ?? "Gagal memuat activity log.");
+      }
+
+      const data = (await response.json()) as ActivityLog[];
+      if (requestId === requestSequenceRef.current) setRows(data);
+    } catch (loadError) {
+      if (controller.signal.aborted || requestId !== requestSequenceRef.current) return;
+
+      setError(loadError instanceof Error ? loadError.message : "Gagal memuat activity log. Periksa koneksi lalu coba lagi.");
+    } finally {
+      if (requestId === requestSequenceRef.current) setLoading(false);
     }
-
-    const data = (await response.json()) as ActivityLog[];
-    setRows(data);
-    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -196,6 +206,7 @@ export function ActivityDashboard() {
     return () => {
       window.clearTimeout(initialTimer);
       window.clearInterval(intervalId);
+      abortControllerRef.current?.abort();
     };
   }, [loadRows]);
 
@@ -287,7 +298,7 @@ export function ActivityDashboard() {
                 variant="outline"
                 className="hidden gap-1.5 border-blue-200 bg-blue-50 text-blue-700 lg:inline-flex dark:border-blue-500/40 dark:bg-blue-500/15 dark:text-blue-300"
               >
-                <span>Riwayat 2 bulan terakhir akan terhapus</span>
+                <span>Retensi terjadwal • tampilan dapat dipaginasi</span>
                 <Info className="size-4" />
               </Badge>
 
@@ -306,13 +317,15 @@ export function ActivityDashboard() {
               {infoPopoverOpen ? (
                 <div className="absolute top-full right-0 z-20 mt-2 w-64 rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-md lg:hidden">
                   <div className="rounded-xl bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">
-                    Riwayat 2 bulan terakhir akan terhapus
+                    Pembacaan log tidak menghapus data. Retensi dijalankan oleh cron harian sesuai ACTIVITY_RETENTION_DAYS (default 180 hari).
                   </div>
                 </div>
               ) : null}
             </div>
           </div>
-          <CardDescription>Dashboard activity bersifat read-only. Data history tidak bisa diedit atau dihapus.</CardDescription>
+          <CardDescription>
+            Read-only. Pembacaan tidak menghapus log; retensi berjalan terjadwal dan endpoint mendukung pagination server-side.
+          </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <div className="grid min-w-0 gap-2 sm:col-span-2 xl:col-span-2">
@@ -384,8 +397,8 @@ export function ActivityDashboard() {
                   ]}
                 />
               </div>
-              <Button type="button" variant="outline" size="icon" onClick={() => void loadRows(true)} aria-label="Refresh activity">
-                <RefreshCcw className="size-4" />
+              <Button type="button" variant="outline" size="icon" onClick={() => void loadRows(true)} aria-label="Refresh activity" disabled={loading}>
+                <RefreshCcw className={`size-4 ${loading ? "animate-spin" : ""}`} />
               </Button>
             </div>
           </div>
@@ -395,10 +408,20 @@ export function ActivityDashboard() {
       <Card className="min-w-0">
         <CardHeader>
           <CardTitle className="text-base">Daftar Aktivitas</CardTitle>
-          <CardDescription>{filteredRows.length} aktivitas ditemukan.</CardDescription>
+          <CardDescription>
+            {filteredRows.length} aktivitas ditemukan. Pagination dan filter diterapkan di browser pada snapshot API (maksimal 500 entri terbaru).
+          </CardDescription>
         </CardHeader>
         <CardContent className="min-w-0 px-0 sm:px-6">
-          {error ? <p className="mb-3 text-sm text-destructive">{error}</p> : null}
+          {error ? (
+            <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3" role="alert">
+              <p className="min-w-0 flex-1 text-sm text-destructive">{error}{rows.length > 0 ? " Data terakhir tetap ditampilkan." : ""}</p>
+              <Button type="button" variant="outline" size="sm" onClick={() => void loadRows(true)} disabled={loading}>
+                <RefreshCcw className={`size-4 ${loading ? "animate-spin" : ""}`} />
+                Coba Lagi
+              </Button>
+            </div>
+          ) : null}
           <div className="scrollbar-AR overflow-x-auto px-3 sm:px-0">
             <Table className="min-w-full md:min-w-190">
             <TableHeader>

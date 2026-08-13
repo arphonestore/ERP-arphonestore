@@ -1,99 +1,123 @@
-import { NextResponse } from "next/server";
-
 import { requireApiAuth } from "@/lib/api-auth";
-import { logActivity } from "@/lib/activity-log";
+import {
+  idempotencyKeySchema,
+  listQuerySchema,
+  stockOutCheckoutSchema,
+} from "@/lib/api/contracts";
+import {
+  escapePostgrestSearch,
+  fetchAllPagesWithCount,
+  fetchPage,
+  inventoryRpc,
+  paginationMetadata,
+  type QueryBuilder,
+  type RangeQueryFactory,
+} from "@/lib/api/database";
+import {
+  actorFromSession,
+  apiErrorResponse,
+  jsonNoStore,
+  parseJsonBody,
+  parseSearchParams,
+} from "@/lib/api/http";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import type { StockOut } from "@/types";
 
-export async function GET() {
+function stockOutQuery(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  filters: { from?: string; to?: string; search?: string }
+): RangeQueryFactory<StockOut> {
+  return ({ count, head }) => {
+    let query = supabase
+      .from("stock_out")
+      .select(
+        "id, stock_id, type, imei, pembeli, harga_modal, harga_jual, keuntungan, tanggal_keluar, voided_at, idempotency_key, created_at",
+        { count, head }
+      )
+      .is("voided_at", null);
+
+    if (filters.from) query = query.gte("tanggal_keluar", filters.from);
+    if (filters.to) query = query.lte("tanggal_keluar", filters.to);
+
+    if (filters.search) {
+      const search = escapePostgrestSearch(filters.search);
+      query = query.or(
+        `type.ilike.%${search}%,imei.ilike.%${search}%,pembeli.ilike.%${search}%`
+      );
+    }
+
+    return query
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false }) as unknown as QueryBuilder<StockOut>;
+  };
+}
+
+export async function GET(request: Request) {
   const authResult = await requireApiAuth();
   if (!authResult.ok) return authResult.response;
 
-  const supabaseAdmin = getSupabaseAdmin();
+  const parsedQuery = parseSearchParams(request, listQuerySchema);
+  if (!parsedQuery.ok) return parsedQuery.response;
 
-  const { data, error } = await supabaseAdmin
-    .from("stock_out")
-    .select("*")
-    .order("created_at", { ascending: false });
+  const { page, pageSize, paginated, from, to, search } = parsedQuery.data;
 
-  if (error) {
-    return NextResponse.json({ message: error.message }, { status: 500 });
+  try {
+    const buildQuery = stockOutQuery(getSupabaseAdmin(), { from, to, search });
+
+    if (paginated) {
+      const result = await fetchPage(buildQuery, page, pageSize);
+      return jsonNoStore({
+        data: result.data,
+        pagination: paginationMetadata(page, pageSize, result.total),
+      });
+    }
+
+    const result = await fetchAllPagesWithCount(buildQuery, { label: "Data barang keluar" });
+    return jsonNoStore(result.data, {
+      headers: { "X-Total-Count": String(result.total) },
+    });
+  } catch (error) {
+    return apiErrorResponse(error, "stock-out.GET");
   }
-
-  return NextResponse.json(data);
 }
 
 export async function POST(request: Request) {
   const authResult = await requireApiAuth();
   if (!authResult.ok) return authResult.response;
 
-  const supabaseAdmin = getSupabaseAdmin();
-
-  const body = await request.json();
-  const imei = String(body.imei ?? "").trim();
-
-  if (!imei) {
-    return NextResponse.json({ message: "IMEI wajib dipilih dari stock tersedia." }, { status: 400 });
+  const parsedKey = idempotencyKeySchema.safeParse(request.headers.get("idempotency-key"));
+  if (!parsedKey.success) {
+    return jsonNoStore(
+      { message: parsedKey.error.issues[0]?.message ?? "Header Idempotency-Key tidak valid." },
+      { status: 400 }
+    );
   }
 
-  const { data: stockItem, error: stockLookupError } = await supabaseAdmin
-    .from("stock")
-    .select("id, type, imei, harga, status")
-    .eq("imei", imei)
-    .single();
+  const parsedBody = await parseJsonBody(request, stockOutCheckoutSchema);
+  if (!parsedBody.ok) return parsedBody.response;
 
-  if (stockLookupError || !stockItem) {
-    return NextResponse.json({ message: "Barang stock tidak ditemukan." }, { status: 404 });
+  const body = parsedBody.data;
+
+  try {
+    const result = await inventoryRpc<StockOut>(getSupabaseAdmin(), "checkout_stock_out", {
+      p_imei: body.imei,
+      p_pembeli: body.pembeli,
+      p_harga_jual: body.harga_jual,
+      p_tanggal_keluar: body.tanggal_keluar,
+      p_idempotency_key: parsedKey.data,
+      ...actorFromSession(authResult.session.user),
+    });
+
+    if (result.error) throw result.error;
+    if (!result.data) throw new Error("RPC checkout_stock_out tidak mengembalikan data.");
+
+    // 200 is intentional for both first checkout and an idempotent replay because the RPC
+    // returns the same durable transaction and does not expose whether this call created it.
+    return jsonNoStore(result.data, {
+      status: 200,
+      headers: { "Idempotency-Key": parsedKey.data },
+    });
+  } catch (error) {
+    return apiErrorResponse(error, "stock-out.POST");
   }
-
-  const stockRow = stockItem as { id: string; type: string; imei: string; harga: number; status: "available" | "sold" };
-
-  if (stockRow.status !== "available") {
-    return NextResponse.json({ message: "Barang sudah tidak tersedia untuk checkout." }, { status: 400 });
-  }
-
-  const hargaModal = Number(stockRow.harga);
-  const hargaJual = Number(body.harga_jual);
-
-  const { data, error } = await supabaseAdmin
-    .from("stock_out")
-    .insert(
-      {
-        type: stockRow.type,
-        imei: stockRow.imei,
-        pembeli: body.pembeli,
-        harga_modal: hargaModal,
-        harga_jual: hargaJual,
-        tanggal_keluar: body.tanggal_keluar,
-      } as never
-    )
-    .select("*")
-    .single();
-
-  if (error) {
-    return NextResponse.json({ message: error.message }, { status: 400 });
-  }
-
-  const { error: updateStockError } = await supabaseAdmin
-    .from("stock")
-    .update({ status: "sold" } as never)
-    .eq("id", stockRow.id)
-    .eq("status", "available");
-
-  if (updateStockError) {
-    await supabaseAdmin.from("stock_out").delete().eq("id", (data as { id: string }).id);
-    return NextResponse.json({ message: updateStockError.message }, { status: 400 });
-  }
-
-  await logActivity({
-    supabase: supabaseAdmin,
-    user: authResult.session.user,
-    action: "checkout",
-    module: "stock_out",
-    entityId: (data as { id: string }).id,
-    entityLabel: `${stockRow.type} (${stockRow.imei})`,
-    description: "Melakukan checkout barang keluar.",
-    afterData: data as Record<string, unknown>,
-  });
-
-  return NextResponse.json(data, { status: 201 });
 }
