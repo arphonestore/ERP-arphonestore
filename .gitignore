@@ -44,6 +44,3 @@ next-env.d.ts
 
 # skills
 skills-lock.json
-
-# netlify
-/.netlify/

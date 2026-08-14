@@ -130,31 +130,23 @@ npm run start
 
 ---
 
-## Setup ENV Vercel
+## Deployment Vercel
 
-Di Vercel, buka Project Settings > Environment Variables, lalu isi variabel berikut untuk scope `Production` (dan `Preview` jika dipakai):
+Project menggunakan Vercel sebagai target deployment dan menyediakan `vercel.json` untuk menjalankan activity-retention cron setiap hari pukul 02:00 UTC.
+
+Di **Vercel > Project Settings > Environment Variables**, isi untuk scope `Production`:
 
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `NEXTAUTH_SECRET`
 - `NEXTAUTH_URL`
-- `ADMIN_USERNAME` dan `ADMIN_PASSWORD` hanya untuk bootstrap pertama
 - `CRON_SECRET`
 - `ACTIVITY_RETENTION_DAYS` (opsional, default `180`)
+- `ADMIN_USERNAME` dan `ADMIN_PASSWORD` hanya jika bootstrap admin belum selesai
 
-Contoh nilai `NEXTAUTH_URL`:
+Gunakan `NEXTAUTH_URL` yang sama persis dengan origin production final, misalnya `https://inventory.example.com`. Setelah bootstrap berhasil dan hash password tersimpan di Supabase, hapus kredensial bootstrap dari Vercel.
 
-- Local: `http://localhost:3000`
-- Preview: `https://your-project-git-branch-your-team.vercel.app`
-- Production: `https://your-domain.com`
-
-Catatan penting:
-
-- Jangan pakai secret/key dari `.env.local` lama untuk public repository.
-- Gunakan nilai berbeda untuk local dan production.
-- Pastikan `NEXTAUTH_URL` sesuai domain aktif agar login callback tidak gagal.
-- Jalankan migration `supabase/migrations/` secara berurutan sebelum mempromosikan deployment.
-- Setelah login pertama berhasil dan hash admin tersimpan, hapus `ADMIN_USERNAME` dan `ADMIN_PASSWORD` dari environment Vercel.
+Panduan import project, pemindahan custom domain dari Netlify, cron, validasi, dan rollback tersedia di [`VERCEL_DEPLOYMENT.md`](VERCEL_DEPLOYMENT.md).
 
 ---
 
@@ -168,11 +160,3 @@ src/
 	lib/                  # Utility, auth, format, helper
 	types/                # Tipe data aplikasi
 ```
-
----
-
-## Creator
-
-**iam-rmdhn**
-
-Jika README ini masih ingin dibuat versi portfolio (dengan screenshot section dan demo flow), saya bisa lanjutkan ke versi showcase.
