@@ -1,7 +1,7 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import type { NextAuthOptions } from "next-auth";
-import { decode } from "next-auth/jwt";
+import { decode, encode as encodeJwt } from "next-auth/jwt";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { headers } from "next/headers";
 import { z } from "zod";
@@ -16,12 +16,17 @@ import { hashPasswordAsync, verifyPassword } from "@/lib/password";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 const SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
+const REMEMBERED_SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
 const PROFILE_COLUMNS = "id, username, full_name, password_hash, avatar_url";
 const PROFILE_COLUMNS_WITH_SESSION_VERSION = `${PROFILE_COLUMNS}, session_version`;
 
 const credentialSchema = z.object({
   username: z.string().trim().min(3).max(128),
   password: z.string().min(6).max(1_024),
+  rememberMe: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
 });
 
 type SupabaseAdmin = ReturnType<typeof getSupabaseAdmin>;
@@ -313,7 +318,7 @@ async function persistBootstrapHash(
   return updatedProfile?.passwordHash === passwordHash ? updatedProfile : null;
 }
 
-function authenticatedUser(profile: AdminProfile) {
+function authenticatedUser(profile: AdminProfile, rememberMe: boolean) {
   return {
     id: profile.id,
     name: normalizeAdminFullName(profile.fullName) ?? profile.username,
@@ -321,6 +326,7 @@ function authenticatedUser(profile: AdminProfile) {
     username: profile.username,
     image: profile.avatarUrl,
     sessionVersion: profile.sessionVersion,
+    rememberMe,
   };
 }
 
@@ -331,10 +337,19 @@ export const authOptions: NextAuthOptions = {
   },
   session: {
     strategy: "jwt",
-    maxAge: SESSION_MAX_AGE_SECONDS,
+    maxAge: REMEMBERED_SESSION_MAX_AGE_SECONDS,
   },
   jwt: {
-    maxAge: SESSION_MAX_AGE_SECONDS,
+    maxAge: REMEMBERED_SESSION_MAX_AGE_SECONDS,
+    async encode(params) {
+      return encodeJwt({
+        ...params,
+        maxAge:
+          params.token?.rememberMe === true
+            ? REMEMBERED_SESSION_MAX_AGE_SECONDS
+            : SESSION_MAX_AGE_SECONDS,
+      });
+    },
     async decode(params) {
       try {
         return await decode(params);
@@ -360,6 +375,7 @@ export const authOptions: NextAuthOptions = {
         token.name = user.name;
         token.picture = user.image;
         token.sessionVersion = user.sessionVersion;
+        token.rememberMe = user.rememberMe === true;
       }
 
       if (trigger === "update") {
@@ -418,6 +434,14 @@ export const authOptions: NextAuthOptions = {
         }
       }
 
+      session.expires = new Date(
+        Date.now() +
+          (token.rememberMe === true
+            ? REMEMBERED_SESSION_MAX_AGE_SECONDS
+            : SESSION_MAX_AGE_SECONDS) *
+            1_000
+      ).toISOString();
+
       return session;
     },
   },
@@ -427,6 +451,7 @@ export const authOptions: NextAuthOptions = {
       credentials: {
         username: { label: "Username", type: "text" },
         password: { label: "Password", type: "password" },
+        rememberMe: { label: "Ingat saya", type: "checkbox" },
       },
       async authorize(credentials) {
         const parsed = credentialSchema.safeParse(credentials);
@@ -510,7 +535,7 @@ export const authOptions: NextAuthOptions = {
             return null;
           }
 
-          return authenticatedUser(profile);
+          return authenticatedUser(profile, parsed.data.rememberMe);
         } catch (error) {
           if (error instanceof AuthConfigurationError) {
             reportAuthConfigurationError(error.message);

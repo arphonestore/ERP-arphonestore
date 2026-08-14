@@ -14,6 +14,7 @@ declare module "next-auth" {
     id: string;
     username?: string;
     sessionVersion?: number;
+    rememberMe?: boolean;
   }
 }
 
@@ -22,5 +23,6 @@ declare module "next-auth/jwt" {
     id?: string;
     username?: string;
     sessionVersion?: number;
+    rememberMe?: boolean;
   }
 }
